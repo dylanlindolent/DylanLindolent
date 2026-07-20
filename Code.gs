@@ -187,6 +187,37 @@ function saveAllocations(allocations) {
  * Editor helper: run from the Apps Script editor and open View > Logs to see
  * the headers each source sheet actually exposes, plus the columns detected.
  */
+/**
+ * Editor helper: run this FIRST if diagnostics()/the dashboard errors with
+ * "Tab not found". Lists every actual tab name in each of the three source
+ * spreadsheets, so you can see exactly what to put in CONFIG.*.tab.
+ */
+function listTabNames() {
+  const out = [];
+  [['AHT', CONFIG.aht.sheetId], ['ROTA', CONFIG.rota.sheetId], ['BACKLOG', CONFIG.backlog.sheetId]]
+    .forEach(function (pair) {
+      const label = pair[0], id = pair[1];
+      try {
+        const ss = SpreadsheetApp.openById(id);
+        const names = ss.getSheets().map(function (s) { return s.getName(); });
+        out.push(label + '  file: "' + ss.getName() + '"');
+        out.push('   tabs: ' + JSON.stringify(names));
+      } catch (e) {
+        out.push(label + '  ERROR opening ' + id + ': ' + e);
+      }
+    });
+  const msg = out.join('\n');
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * Editor helper: run from the Apps Script editor and open View > Logs to see
+ * the headers each source sheet actually exposes, plus the columns detected.
+ * If a tab isn't found, this also lists the real tab names available in that
+ * spreadsheet (same info as listTabNames(), inline) so you can fix CONFIG in
+ * one pass.
+ */
 function diagnostics() {
   const out = [];
   [['AHT', CONFIG.aht], ['ROTA', CONFIG.rota], ['BACKLOG', CONFIG.backlog]].forEach(function (pair) {
@@ -198,6 +229,13 @@ function diagnostics() {
       out.push('   rows: ' + t.rows.length + '  sample: ' + JSON.stringify(t.rows[0] || {}));
     } catch (e) {
       out.push(label + '  ERROR: ' + e);
+      try {
+        const ss = SpreadsheetApp.openById(cfg.sheetId);
+        const names = ss.getSheets().map(function (s) { return s.getName(); });
+        out.push('   real tabs in "' + ss.getName() + '": ' + JSON.stringify(names));
+      } catch (e2) {
+        out.push('   could not open spreadsheet ' + cfg.sheetId + ': ' + e2);
+      }
     }
   });
   const msg = out.join('\n');
