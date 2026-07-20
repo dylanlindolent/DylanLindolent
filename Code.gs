@@ -273,11 +273,11 @@ function probeBacklog() {
  * that sound more likely to hold per-scheme backlog volume.
  */
 function probeSchemeView() {
-  return probeRawRows_(CONFIG.backlog.sheetId, 'Scheme_View', 8);
+  return probeRawRows_(CONFIG.backlog.sheetId, 'Scheme_View', 40);
 }
 
 function probeBacklogAllocation() {
-  return probeRawRows_(CONFIG.backlog.sheetId, 'Backlog_allocation', 8);
+  return probeRawRows_(CONFIG.backlog.sheetId, 'Backlog_allocation', 40);
 }
 
 /* ============================ MODEL BUILD ============================= */
