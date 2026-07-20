@@ -6,7 +6,7 @@
  *
  *   1. AHT analysis   -> "AHT Validation" tab, column E ("new AHT", minutes/case)
  *   2. Rota           -> "Rota" tab (who is working, which day, which scheme)
- *   3. Backlog        -> "backlog team planning" tab (open cases per scheme)
+ *   3. Backlog        -> "Backlog_Team Planning" tab (open cases per scheme)
  *
  * Core assumption: 7 productive hours per employee per working day.
  *
@@ -65,7 +65,7 @@ const CONFIG = {
 
   backlog: {
     sheetId: '1-ywS9-yFh0rJYwX421uADNZbr3UjgAWVcxkB1kfsQJE',
-    tab: 'backlog team planning',
+    tab: 'Backlog_Team Planning',
     headerRow: 1,
     columns: {
       scheme: ['scheme', 'queue', 'claim type', 'type', 'category', 'product', 'reason'],

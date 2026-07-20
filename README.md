@@ -17,7 +17,7 @@ source of truth.
 |---|---|---|
 | **AHT analysis** | `AHT Validation` tab, **column E** (`new AHT`) | Minutes per case, per scheme (and per agent if present) |
 | **Rota** | `Rota` tab | Who is working, which day → available capacity |
-| **Backlog** | `backlog team planning` tab | Open cases per scheme → demand |
+| **Backlog** | `Backlog_Team Planning` tab | Open cases per scheme → demand |
 
 **Calculations**
 
