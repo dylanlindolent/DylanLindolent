@@ -1,0 +1,7 @@
+# clasp — contains your private scriptId; copy from .clasp.json.example
+.clasp.json
+.clasprc.json
+
+node_modules/
+*.log
+.DS_Store

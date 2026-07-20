@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    /* ---- Checkout light theme + validated data-viz palette ------------ */
+    :root {
+      color-scheme: light;
+      /* Checkout brand accent (swap this one value to your exact pantone) */
+      --brand:            #5A31F4;   /* Checkout indigo */
+      --brand-600:        #4a27d6;
+      --brand-100:        #ece7ff;
+      --brand-050:        #f6f3ff;
+
+      /* surfaces & ink (dataviz reference, tinted to the brand) */
+      --page:             #f7f6fc;
+      --surface-1:        #ffffff;
+      --text-primary:     #14131f;
+      --text-secondary:   #52514e;
+      --muted:            #898781;
+      --grid:             #eceaf3;
+      --baseline:         #d9d7e4;
+      --border:           rgba(20,19,31,0.10);
+
+      /* categorical series (validated: light, surface #fbfaff) */
+      --s1: #2a78d6;  --s2: #008300;  --s3: #e87ba4;  --s4: #eda100;
+      --s5: #1baf7a;  --s6: #eb6834;  --s7: #4a3aa7;  --s8: #e34948;
+
+      /* status */
+      --good:   #0ca30c;  --warning: #fab219;  --serious: #ec835a;  --critical: #d03b3b;
+
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(20,19,31,.05), 0 8px 24px rgba(20,19,31,.06);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--page); color: var(--text-primary);
+      font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--brand); }
+
+    /* ---- Header ------------------------------------------------------- */
+    header.app {
+      background: linear-gradient(100deg, var(--brand) 0%, var(--brand-600) 100%);
+      color: #fff; padding: 18px 24px; display: flex; align-items: center; gap: 14px;
+    }
+    header.app .logo {
+      width: 34px; height: 34px; border-radius: 8px; background: rgba(255,255,255,.16);
+      display: grid; place-items: center; font-weight: 800; letter-spacing: -.5px;
+    }
+    header.app h1 { font-size: 17px; margin: 0; font-weight: 650; }
+    header.app .sub { font-size: 12px; opacity: .82; margin-top: 1px; }
+    header.app .spacer { flex: 1; }
+    header.app .stamp { font-size: 12px; opacity: .85; text-align: right; }
+
+    main { padding: 20px 24px 48px; max-width: 1320px; margin: 0 auto; }
+
+    /* ---- Filter bar (one row above the charts) ------------------------ */
+    .filters {
+      display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end;
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+      margin-bottom: 18px;
+    }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+    .field input, .field select {
+      font: inherit; padding: 7px 10px; border: 1px solid var(--baseline);
+      border-radius: 8px; background: #fff; color: var(--text-primary); min-width: 150px;
+    }
+    .field select[multiple] { min-width: 200px; height: 74px; }
+    .field input:focus, .field select:focus { outline: 2px solid var(--brand-100); border-color: var(--brand); }
+    .filters .grow { flex: 1; }
+    button {
+      font: inherit; font-weight: 600; cursor: pointer; border-radius: 8px;
+      border: 1px solid var(--baseline); background: #fff; color: var(--text-primary);
+      padding: 8px 14px; transition: .12s;
+    }
+    button:hover { border-color: var(--brand); }
+    button.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+    button.primary:hover { background: var(--brand-600); }
+    button:disabled { opacity: .5; cursor: default; }
+    .presets { display: flex; gap: 6px; }
+    .presets button { padding: 6px 10px; font-size: 12px; font-weight: 550; }
+
+    /* ---- KPI tiles ---------------------------------------------------- */
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .tile {
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 16px; box-shadow: var(--shadow);
+    }
+    .tile .k { font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+    .tile .v { font-size: 26px; font-weight: 700; margin-top: 4px; letter-spacing: -.5px; }
+    .tile .u { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+    .tile .v small { font-size: 14px; color: var(--muted); font-weight: 600; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; }
+    .pill.good { background: #e6f6e6; color: #0a7d0a; }
+    .pill.warn { background: #fff4dc; color: #9a6a00; }
+    .pill.bad  { background: #fbe4e4; color: #b32424; }
+
+    /* ---- Cards / charts ---------------------------------------------- */
+    .grid2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 16px 18px; box-shadow: var(--shadow); margin-bottom: 18px;
+    }
+    .card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 650; }
+    .card .desc { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+    .legend .item { display: flex; align-items: center; gap: 6px; }
+    .swatch { width: 11px; height: 11px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,.05); }
+
+    /* horizontal bar chart */
+    .bars { display: flex; flex-direction: column; gap: 11px; }
+    .bar-row { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 12px; }
+    .bar-row .name { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .track { position: relative; height: 26px; }
+    .seg-group { position: relative; height: 100%; }
+    .seg {
+      position: absolute; top: 0; height: 100%; border-radius: 4px;
+      display: flex; align-items: center; transition: width .3s ease;
+    }
+    .seg.demand { top: 0; height: 11px; }
+    .seg.cap    { top: 15px; height: 11px; }
+    .bar-row .val { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+    .mini-legend { font-size: 10.5px; color: var(--muted); }
+
+    .single .seg { border-radius: 0 4px 4px 0; }
+    .single .track { height: 22px; }
+
+    /* ---- Table -------------------------------------------------------- */
+    .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar .spacer { flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); font-weight: 650; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:hover td { background: var(--brand-050); }
+    td input.alloc {
+      width: 72px; text-align: right; font: inherit; font-variant-numeric: tabular-nums;
+      padding: 4px 6px; border: 1px solid var(--baseline); border-radius: 6px;
+    }
+    td input.alloc.changed { border-color: var(--brand); background: var(--brand-050); }
+    .tag { font-size: 10.5px; padding: 1px 6px; border-radius: 5px; background: var(--brand-100); color: var(--brand-600); font-weight: 650; }
+    .tag.est { background: #fff4dc; color: #9a6a00; }
+
+    /* ---- misc --------------------------------------------------------- */
+    .msg { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+    .msg.err { background: #fbe4e4; color: #8f1d1d; border: 1px solid #f3c0c0; }
+    .msg.ok  { background: #e6f6e6; color: #0a7d0a; border: 1px solid #bfe6bf; }
+    .muted { color: var(--muted); }
+    .spinner {
+      width: 16px; height: 16px; border: 2px solid var(--brand-100); border-top-color: var(--brand);
+      border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: -3px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-overlay { display: none; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; padding: 40px; justify-content: center; }
+
+    /* tooltip */
+    #tip {
+      position: fixed; pointer-events: none; z-index: 50; background: #14131f; color: #fff;
+      font-size: 12px; padding: 7px 10px; border-radius: 7px; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+      opacity: 0; transition: opacity .1s; max-width: 260px; line-height: 1.4;
+    }
+    #tip b { color: #fff; }
+  </style>
+</head>
+<body>
+  <header class="app">
+    <div class="logo">Co</div>
+    <div>
+      <h1>AHT Capacity Dashboard</h1>
+      <div class="sub">Live capacity plan from AHT analysis, Rota &amp; Backlog · 7 productive hrs/day</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="stamp" id="stamp"></div>
+  </header>
+
+  <main>
+    <div id="msg"></div>
+
+    <!-- Filters -->
+    <div class="filters">
+      <div class="field">
+        <label for="dateFrom">Date from</label>
+        <input type="date" id="dateFrom">
+      </div>
+      <div class="field">
+        <label for="dateTo">Date to</label>
+        <input type="date" id="dateTo">
+      </div>
+      <div class="field">
+        <label>Quick range</label>
+        <div class="presets">
+          <button data-preset="today">Today</button>
+          <button data-preset="7">7d</button>
+          <button data-preset="30">30d</button>
+          <button data-preset="mtd">MTD</button>
+          <button data-preset="all">All</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="reporter">Reporter (employee)</label>
+        <select id="reporter"><option value="">All employees</option></select>
+      </div>
+      <div class="field grow">
+        <label for="schemes">Scheme <span class="muted">(ctrl/cmd-click for multiple)</span></label>
+        <select id="schemes" multiple></select>
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="primary" id="apply">Apply filters</button>
+      </div>
+    </div>
+
+    <div class="loading-overlay" id="loading"><span class="spinner"></span> Loading live data…</div>
+
+    <div id="dashboard" style="display:none">
+      <!-- KPI tiles -->
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid2">
+        <!-- Demand vs capacity by scheme -->
+        <div class="card">
+          <h2>Demand vs. capacity by scheme</h2>
+          <p class="desc">Backlog work required (backlog × new AHT) against available team capacity, in hours.</p>
+          <div class="legend">
+            <div class="item"><span class="swatch" style="background:var(--s6)"></span>Demand (required hrs)</div>
+            <div class="item"><span class="swatch" style="background:var(--s1)"></span>Team capacity share (hrs)</div>
+          </div>
+          <div class="bars" id="schemeBars"></div>
+        </div>
+
+        <!-- Per-employee capacity -->
+        <div class="card">
+          <h2>Capacity per employee</h2>
+          <p class="desc">Working days in range × 7 hrs. Filtered to the selected employee when set.</p>
+          <div class="bars single" id="repBars"></div>
+        </div>
+      </div>
+
+      <!-- Recommendations table -->
+      <div class="card">
+        <div class="toolbar">
+          <div>
+            <h2 style="margin:0">Recommended allocation</h2>
+            <p class="desc" style="margin:2px 0 0">Demand-weighted split across rostered employees. Edit “Allocated” to override — saving writes back to the Rota sheet.</p>
+          </div>
+          <div class="spacer"></div>
+          <span id="saveState" class="muted"></span>
+          <button id="resetAlloc">Reset edits</button>
+          <button class="primary" id="saveAlloc" disabled>Save to Rota</button>
+        </div>
+        <table id="recTable">
+          <thead>
+            <tr>
+              <th>Reporter (employee)</th>
+              <th>Scheme</th>
+              <th class="num">Capacity (hrs)</th>
+              <th class="num">Recommended cases</th>
+              <th class="num">Recommended hrs</th>
+              <th class="num">Allocated cases</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="recBody"></tbody>
+        </table>
+      </div>
+
+      <p class="muted" id="footnote" style="font-size:12px"></p>
+    </div>
+  </main>
+
+  <div id="tip"></div>
+
+
+  <script>
+    // ---- MOCK BACKEND (preview only) -------------------------------------
+    var MOCK_OPTIONS = { ok: true,
+      reporters: ['Amelia Chen','Ben Okafor','Carla Diaz','Dmitri Volkov','Elena Rossi','Farid Khan','Grace Lin'],
+      schemes: ['Visa','Mastercard','Amex','Fraud','Retrieval','Chargeback','Pre-arbitration'],
+      dateRange: { min: '2026-07-13', max: '2026-07-20' } };
+    var MOCK_DATA = { ok: true, generatedAt: '2026-07-20 09:12', data: {
+      assumptions: { productivityHoursPerDay: 7, dayMinutes: 420 },
+      kpis: { teamCapacityHours: 245, demandHours: 288.5, utilisation: 117.8, backlogCases: 1842, headcount: 7, workingDays: 35, surplusHours: -43.5, daysToClear: 9.8 },
+      schemes: [
+        { scheme:'Chargeback', backlogCases:520, ahtMinutes:14.5, ahtEstimated:false, demandHours:125.7, demandMinutes:7540 },
+        { scheme:'Fraud', backlogCases:410, ahtMinutes:9.0, ahtEstimated:false, demandHours:61.5, demandMinutes:3690 },
+        { scheme:'Retrieval', backlogCases:360, ahtMinutes:6.5, ahtEstimated:false, demandHours:39.0, demandMinutes:2340 },
+        { scheme:'Visa', backlogCases:250, ahtMinutes:7.2, ahtEstimated:false, demandHours:30.0, demandMinutes:1800 },
+        { scheme:'Mastercard', backlogCases:180, ahtMinutes:7.0, ahtEstimated:false, demandHours:21.0, demandMinutes:1260 },
+        { scheme:'Pre-arbitration', backlogCases:82, ahtMinutes:5.0, ahtEstimated:true, demandHours:6.8, demandMinutes:410 },
+        { scheme:'Amex', backlogCases:40, ahtMinutes:6.8, ahtEstimated:false, demandHours:4.5, demandMinutes:272 }
+      ],
+      reporters: [
+        { reporter:'Amelia Chen', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback' },
+        { reporter:'Ben Okafor', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Fraud' },
+        { reporter:'Carla Diaz', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Visa' },
+        { reporter:'Dmitri Volkov', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Retrieval' },
+        { reporter:'Elena Rossi', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback' },
+        { reporter:'Farid Khan', days:4, capacityHours:28, capacityMinutes:1680, currentScheme:'Mastercard' },
+        { reporter:'Grace Lin', days:6, capacityHours:42, capacityMinutes:2520, currentScheme:'Fraud' }
+      ],
+      recommendations: [
+        { reporter:'Grace Lin', scheme:'Chargeback', recommendedCases:74, recommendedHours:17.9, allocatedCases:74, overridden:false, capacityHours:42 },
+        { reporter:'Amelia Chen', scheme:'Chargeback', recommendedCases:62, recommendedHours:14.9, allocatedCases:80, overridden:true, capacityHours:35 },
+        { reporter:'Elena Rossi', scheme:'Chargeback', recommendedCases:62, recommendedHours:14.9, allocatedCases:62, overridden:false, capacityHours:35 },
+        { reporter:'Ben Okafor', scheme:'Fraud', recommendedCases:74, recommendedHours:11.1, allocatedCases:74, overridden:false, capacityHours:35 },
+        { reporter:'Grace Lin', scheme:'Fraud', recommendedCases:60, recommendedHours:9.0, allocatedCases:60, overridden:false, capacityHours:42 },
+        { reporter:'Dmitri Volkov', scheme:'Retrieval', recommendedCases:96, recommendedHours:10.4, allocatedCases:96, overridden:false, capacityHours:35 },
+        { reporter:'Carla Diaz', scheme:'Visa', recommendedCases:71, recommendedHours:8.6, allocatedCases:71, overridden:false, capacityHours:35 },
+        { reporter:'Farid Khan', scheme:'Mastercard', recommendedCases:52, recommendedHours:6.1, allocatedCases:52, overridden:false, capacityHours:28 }
+      ],
+      overridesCount: 1
+    }};
+    window.google = { script: { run: (function(){
+      function make(){ var h={s:null,f:null};
+        var api={ withSuccessHandler:function(fn){h.s=fn;return api;},
+                  withFailureHandler:function(fn){h.f=fn;return api;},
+                  getFilterOptions:function(){setTimeout(function(){h.s(MOCK_OPTIONS);},150);return api;},
+                  getDashboardData:function(){setTimeout(function(){h.s(MOCK_DATA);},250);return api;},
+                  saveAllocations:function(p){setTimeout(function(){h.s({ok:true,saved:p.length});},300);return api;} };
+        return api; }
+      return new Proxy({}, { get:function(){ return make()[arguments[1]] ? make()[arguments[1]] : function(){ return make(); }; } });
+    })() } };
+    // simpler: expose a fresh builder each access
+    window.google.script.run = (function(){
+      function builder(){ var s=function(){}, f=function(){};
+        return { withSuccessHandler:function(fn){s=fn;return this;},
+                 withFailureHandler:function(fn){f=fn;return this;},
+                 getFilterOptions:function(){setTimeout(function(){s(MOCK_OPTIONS);},120);return this;},
+                 getDashboardData:function(){setTimeout(function(){s(MOCK_DATA);},220);return this;},
+                 saveAllocations:function(p){setTimeout(function(){s({ok:true,saved:p.length});},280);return this;} }; }
+      return new Proxy({}, { get:function(t,prop){ var b=builder(); return typeof b[prop]==='function'? b[prop].bind(b): b[prop]; } });
+    })();
+  </script>
+  <script>
+    var SERIES = ['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8'];
+    var LAST = null;         // last dashboard payload
+    var EDITS = {};          // key -> new cases
+    var OPTIONS = null;
+
+    function $(id) { return document.getElementById(id); }
+    function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+    function fmt(n) { return (Math.round((Number(n) || 0) * 10) / 10).toLocaleString(); }
+
+    // ---- Tooltip ----
+    var tip = $('tip');
+    function showTip(html, e) { tip.innerHTML = html; tip.style.opacity = 1; moveTip(e); }
+    function moveTip(e) {
+      var x = e.clientX + 14, y = e.clientY + 14;
+      if (x + tip.offsetWidth > window.innerWidth) x = e.clientX - tip.offsetWidth - 14;
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    }
+    function hideTip() { tip.style.opacity = 0; }
+
+    // ---- Message helpers ----
+    function showMsg(kind, text) { $('msg').innerHTML = '<div class="msg ' + kind + '">' + esc(text) + '</div>'; }
+    function clearMsg() { $('msg').innerHTML = ''; }
+
+    // ---- Init ----
+    window.addEventListener('load', function () {
+      google.script.run
+        .withSuccessHandler(onOptions)
+        .withFailureHandler(function (e) { showMsg('err', 'Failed to load filters: ' + e.message); })
+        .getFilterOptions();
+
+      $('apply').onclick = load;
+      $('resetAlloc').onclick = function () { EDITS = {}; renderRecs(LAST.recommendations); updateSaveState(); };
+      $('saveAlloc').onclick = saveEdits;
+
+      var presetBtns = document.querySelectorAll('.presets button');
+      for (var i = 0; i < presetBtns.length; i++) {
+        presetBtns[i].onclick = function () { applyPreset(this.getAttribute('data-preset')); };
+      }
+    });
+
+    function onOptions(res) {
+      if (!res || !res.ok) { showMsg('err', 'Could not read source sheets: ' + (res && res.error)); return; }
+      OPTIONS = res;
+      var rep = $('reporter');
+      res.reporters.forEach(function (r) {
+        var o = document.createElement('option'); o.value = r; o.textContent = r; rep.appendChild(o);
+      });
+      var sch = $('schemes');
+      res.schemes.forEach(function (s) {
+        var o = document.createElement('option'); o.value = s; o.textContent = s; sch.appendChild(o);
+      });
+      if (res.dateRange.min) $('dateFrom').value = res.dateRange.min;
+      if (res.dateRange.max) $('dateTo').value = res.dateRange.max;
+      load();
+    }
+
+    function applyPreset(p) {
+      var today = new Date();
+      var iso = function (d) { return d.toISOString().slice(0, 10); };
+      if (p === 'all') { $('dateFrom').value = OPTIONS ? OPTIONS.dateRange.min : ''; $('dateTo').value = OPTIONS ? OPTIONS.dateRange.max : ''; }
+      else if (p === 'today') { $('dateFrom').value = iso(today); $('dateTo').value = iso(today); }
+      else if (p === 'mtd') { $('dateFrom').value = iso(new Date(today.getFullYear(), today.getMonth(), 1)); $('dateTo').value = iso(today); }
+      else { var d = new Date(); d.setDate(d.getDate() - (parseInt(p, 10) - 1)); $('dateFrom').value = iso(d); $('dateTo').value = iso(today); }
+      load();
+    }
+
+    function collectFilters() {
+      var schemes = [];
+      var opts = $('schemes').options;
+      for (var i = 0; i < opts.length; i++) if (opts[i].selected) schemes.push(opts[i].value);
+      return {
+        dateFrom: $('dateFrom').value || '',
+        dateTo: $('dateTo').value || '',
+        reporter: $('reporter').value || '',
+        schemes: schemes
+      };
+    }
+
+    // ---- Load ----
+    function load() {
+      clearMsg();
+      $('loading').style.display = 'flex';
+      $('dashboard').style.display = 'none';
+      EDITS = {};
+      google.script.run
+        .withSuccessHandler(onData)
+        .withFailureHandler(function (e) {
+          $('loading').style.display = 'none';
+          showMsg('err', 'Error: ' + e.message);
+        })
+        .getDashboardData(collectFilters());
+    }
+
+    function onData(res) {
+      $('loading').style.display = 'none';
+      if (!res || !res.ok) { showMsg('err', 'Error: ' + (res && res.error)); return; }
+      LAST = res.data;
+      $('stamp').textContent = 'Updated ' + res.generatedAt;
+      $('dashboard').style.display = 'block';
+      renderKpis(LAST.kpis);
+      renderSchemeBars(LAST.schemes, LAST.kpis);
+      renderRepBars(LAST.reporters);
+      renderRecs(LAST.recommendations);
+      updateSaveState();
+      var a = LAST.assumptions;
+      $('footnote').textContent = 'Assumption: ' + a.productivityHoursPerDay + ' productive hrs/day (' +
+        a.dayMinutes + ' min). AHT source: AHT Validation!E. ' +
+        (LAST.overridesCount ? (LAST.overridesCount + ' manual override(s) applied from Rota.') : '');
+    }
+
+    // ---- KPIs ----
+    function renderKpis(k) {
+      var util = k.utilisation;
+      var utilClass = util > 100 ? 'bad' : (util > 85 ? 'warn' : 'good');
+      var surplusClass = k.surplusHours < 0 ? 'bad' : 'good';
+      var tiles = [
+        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours (' + k.workingDays + ' working days)' },
+        { k: 'Demand (backlog)', v: fmt(k.demandHours), u: fmt(k.backlogCases) + ' cases' },
+        { k: 'Utilisation', v: fmt(util) + '<small>%</small>', u: '<span class="pill ' + utilClass + '">' + (util > 100 ? 'Over capacity' : 'Within capacity') + '</span>' },
+        { k: 'Head-count', v: fmt(k.headcount), u: 'rostered employees' },
+        { k: 'Surplus / deficit', v: (k.surplusHours >= 0 ? '+' : '') + fmt(k.surplusHours), u: '<span class="pill ' + surplusClass + '">' + (k.surplusHours >= 0 ? 'spare hrs' : 'short hrs') + '</span>' },
+        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current head-count' }
+      ];
+      $('kpis').innerHTML = tiles.map(function (t) {
+        return '<div class="tile"><div class="k">' + t.k + '</div><div class="v">' + t.v + '</div><div class="u">' + t.u + '</div></div>';
+      }).join('');
+    }
+
+    // ---- Scheme bars (demand vs capacity share) ----
+    function renderSchemeBars(schemes, kpis) {
+      if (!schemes.length) { $('schemeBars').innerHTML = '<p class="muted">No scheme data for this selection.</p>'; return; }
+      // capacity share = same demand-weighted split used for recommendations
+      var totalDemand = schemes.reduce(function (s, x) { return s + x.demandHours; }, 0);
+      var cap = kpis.teamCapacityHours;
+      var max = 0;
+      schemes.forEach(function (s) {
+        s._capShare = totalDemand > 0 ? Math.min(s.demandHours, cap * (s.demandHours / totalDemand)) : 0;
+        max = Math.max(max, s.demandHours, s._capShare);
+      });
+      max = max || 1;
+      $('schemeBars').innerHTML = schemes.map(function (s) {
+        var dW = (s.demandHours / max * 100);
+        var cW = (s._capShare / max * 100);
+        var over = s.demandHours > s._capShare + 0.05;
+        return '<div class="bar-row">' +
+          '<div class="name" title="' + esc(s.scheme) + '">' + esc(s.scheme) +
+            (s.ahtEstimated ? ' <span class="tag est">est AHT</span>' : '') + '</div>' +
+          '<div class="track" ' +
+            'data-tip="<b>' + esc(s.scheme) + '</b><br>Backlog: ' + fmt(s.backlogCases) + ' cases' +
+            '<br>New AHT: ' + fmt(s.ahtMinutes) + ' min/case' +
+            '<br>Demand: ' + fmt(s.demandHours) + ' hrs<br>Capacity share: ' + fmt(s._capShare) + ' hrs">' +
+            '<div class="seg demand" style="width:' + dW + '%;background:var(--s6)"></div>' +
+            '<div class="seg cap" style="width:' + cW + '%;background:var(--s1)"></div>' +
+          '</div>' +
+          '<div class="val">' + fmt(s.demandHours) + 'h' +
+            (over ? ' <span class="pill bad">short</span>' : '') + '</div>' +
+        '</div>';
+      }).join('');
+      bindTips('schemeBars');
+    }
+
+    // ---- Reporter bars ----
+    function renderRepBars(reps) {
+      if (!reps.length) { $('repBars').innerHTML = '<p class="muted">No rostered employees for this selection.</p>'; return; }
+      var max = reps.reduce(function (m, r) { return Math.max(m, r.capacityHours); }, 0) || 1;
+      $('repBars').innerHTML = reps.map(function (r, i) {
+        var w = r.capacityHours / max * 100;
+        var color = 'var(' + SERIES[i % SERIES.length] + ')';
+        return '<div class="bar-row">' +
+          '<div class="name" title="' + esc(r.reporter) + '">' + esc(r.reporter) + '</div>' +
+          '<div class="track" data-tip="<b>' + esc(r.reporter) + '</b><br>' + r.days + ' working days' +
+            '<br>Capacity: ' + fmt(r.capacityHours) + ' hrs' +
+            (r.currentScheme ? '<br>Rota scheme: ' + esc(r.currentScheme) : '') + '">' +
+            '<div class="seg" style="width:' + w + '%;background:' + color + ';top:0;height:100%"></div>' +
+          '</div>' +
+          '<div class="val">' + fmt(r.capacityHours) + 'h</div>' +
+        '</div>';
+      }).join('');
+      bindTips('repBars');
+    }
+
+    function bindTips(containerId) {
+      var tracks = $(containerId).querySelectorAll('.track[data-tip]');
+      for (var i = 0; i < tracks.length; i++) {
+        (function (el) {
+          el.addEventListener('mousemove', function (e) { showTip(el.getAttribute('data-tip'), e); });
+          el.addEventListener('mouseleave', hideTip);
+        })(tracks[i]);
+      }
+    }
+
+    // ---- Recommendations table ----
+    function keyOf(r) { return r.reporter + '||' + r.scheme; }
+
+    function renderRecs(recs) {
+      if (!recs.length) { $('recBody').innerHTML = '<tr><td colspan="7" class="muted">No recommendations for this selection.</td></tr>'; return; }
+      $('recBody').innerHTML = recs.map(function (r) {
+        var k = keyOf(r);
+        var val = (k in EDITS) ? EDITS[k] : r.allocatedCases;
+        var changed = (k in EDITS) && EDITS[k] !== r.recommendedCases;
+        return '<tr>' +
+          '<td>' + esc(r.reporter) + '</td>' +
+          '<td>' + esc(r.scheme) + (r.overridden ? ' <span class="tag">override</span>' : '') + '</td>' +
+          '<td class="num">' + fmt(r.capacityHours) + '</td>' +
+          '<td class="num">' + fmt(r.recommendedCases) + '</td>' +
+          '<td class="num">' + fmt(r.recommendedHours) + '</td>' +
+          '<td class="num"><input class="alloc' + (changed ? ' changed' : '') + '" type="number" min="0" step="1" ' +
+            'value="' + val + '" data-key="' + esc(k) + '"></td>' +
+          '<td class="muted" style="font-size:11px">' + (r.overridden ? 'from Rota' : '') + '</td>' +
+        '</tr>';
+      }).join('');
+      var inputs = $('recBody').querySelectorAll('input.alloc');
+      for (var i = 0; i < inputs.length; i++) {
+        inputs[i].addEventListener('input', function () {
+          var k = this.getAttribute('data-key');
+          EDITS[k] = Number(this.value) || 0;
+          this.classList.add('changed');
+          updateSaveState();
+        });
+      }
+    }
+
+    function updateSaveState() {
+      var n = Object.keys(EDITS).length;
+      $('saveAlloc').disabled = n === 0;
+      $('saveState').textContent = n ? (n + ' unsaved edit' + (n > 1 ? 's' : '')) : '';
+    }
+
+    function saveEdits() {
+      var payload = [];
+      var byKey = {};
+      LAST.recommendations.forEach(function (r) { byKey[keyOf(r)] = r; });
+      Object.keys(EDITS).forEach(function (k) {
+        var r = byKey[k]; if (!r) return;
+        payload.push({
+          date: $('dateTo').value || $('dateFrom').value || '',
+          reporter: r.reporter, scheme: r.scheme,
+          cases: EDITS[k], note: 'Manual allocation via dashboard'
+        });
+      });
+      if (!payload.length) return;
+      $('saveAlloc').disabled = true;
+      $('saveState').innerHTML = '<span class="spinner"></span> Saving…';
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.ok) {
+            showMsg('ok', 'Saved ' + res.saved + ' allocation(s) back to the Rota sheet.');
+            EDITS = {};
+            load(); // refresh so overrides re-read from source
+          } else {
+            showMsg('err', 'Save failed: ' + (res && res.error));
+            $('saveAlloc').disabled = false;
+          }
+          $('saveState').textContent = '';
+        })
+        .withFailureHandler(function (e) {
+          showMsg('err', 'Save failed: ' + e.message);
+          $('saveState').textContent = ''; $('saveAlloc').disabled = false;
+        })
+        .saveAllocations(payload);
+    }
+  </script>
+</body>
+</html>
