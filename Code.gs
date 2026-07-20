@@ -184,10 +184,6 @@ function saveAllocations(allocations) {
 }
 
 /**
- * Editor helper: run from the Apps Script editor and open View > Logs to see
- * the headers each source sheet actually exposes, plus the columns detected.
- */
-/**
  * Editor helper: run this FIRST if diagnostics()/the dashboard errors with
  * "Tab not found". Lists every actual tab name in each of the three source
  * spreadsheets, so you can see exactly what to put in CONFIG.*.tab.
@@ -241,6 +237,34 @@ function diagnostics() {
   const msg = out.join('\n');
   Logger.log(msg);
   return msg;
+}
+
+/**
+ * Editor helpers: dump the first N raw rows of the Rota / Backlog tabs
+ * exactly as stored (no header assumption, no column detection). Use these
+ * when diagnostics() shows headers/detected columns that don't look right —
+ * e.g. a multi-row header or a pivot-table layout — so the real row-by-row
+ * structure can be seen and CONFIG/readers adjusted to match it.
+ */
+function probeRawRows_(sheetId, tabName, n) {
+  const ss = SpreadsheetApp.openById(sheetId);
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) return 'Tab "' + tabName + '" not found in ' + sheetId;
+  const rows = Math.min(n, sheet.getLastRow());
+  const cols = sheet.getLastColumn();
+  if (rows < 1 || cols < 1) return '(sheet is empty)';
+  const values = sheet.getRange(1, 1, rows, cols).getValues();
+  const msg = values.map(function (row, i) { return 'row ' + (i + 1) + ': ' + JSON.stringify(row); }).join('\n');
+  Logger.log(msg);
+  return msg;
+}
+
+function probeRota() {
+  return probeRawRows_(CONFIG.rota.sheetId, CONFIG.rota.tab, 6);
+}
+
+function probeBacklog() {
+  return probeRawRows_(CONFIG.backlog.sheetId, CONFIG.backlog.tab, 6);
 }
 
 /* ============================ MODEL BUILD ============================= */
