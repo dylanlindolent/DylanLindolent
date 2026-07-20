@@ -1,13 +1,25 @@
 # AHT Capacity Dashboard (Google Apps Script)
 
-A live capacity-planning dashboard for the disputes/claims team. It pulls data
-straight from three Google Sheets and calculates a capacity plan **per employee
-(reporter)** and **for the team**, on the assumption of **7 productive hours per
-employee per working day**.
+A live capacity-planning dashboard for the disputes/claims team, on the
+assumption of **7 productive hours per employee per working day**.
 
-Recommended allocations are editable on the dashboard, and saving writes the
-overrides back into the **Rota** spreadsheet — so the rota stays the single
-source of truth.
+**Rota and Backlog are two different activities with separate workloads and
+separate rosters** (confirmed with the sheet owner — e.g. `GB-VISA` has both a
+Rota row and separately-dated Backlog cases), so the dashboard models them as
+two parallel tracks:
+
+- **Rota** (reconciliation coverage) — who's rostered each day, and which
+  schemes they cover. There's no tracked day-to-day incoming volume for this
+  activity, so it's shown as headcount/capacity/coverage only — no
+  demand-based utilisation is fabricated for it.
+- **Backlog** (clearance of aged cases) — a separate roster, sized against
+  `Scheme_View`'s open-case counts via AHT. This is where "are they fully
+  utilised for the 7 hours, based on the AHT?" is answered, both team-wide
+  and per person.
+
+Recommended Backlog allocations are editable on the dashboard, and saving
+writes the overrides back into the **Rota** spreadsheet's `Dashboard
+Allocations` tab.
 
 ---
 
@@ -16,33 +28,48 @@ source of truth.
 | Source | Sheet / tab | Used for |
 |---|---|---|
 | **AHT analysis** | `AHT Validation` tab, **column E** (`new AHT`) | Minutes per case, per scheme (averaged across entities); column A (`Reconciliation`) + column B (`Scheme`) also supply the entity+scheme → plain-scheme lookup used to translate Rota's rows |
-| **Rota** | `Rota` tab | Who is working, which day, which scheme → available capacity + real scheme rostering |
-| **Backlog** | `Scheme_View` tab | Open cases per scheme (`Grand Total` column) → demand |
+| **Rota** | `Rota` tab | Who is working reconciliation, which day, which scheme → coverage + capacity |
+| **Backlog roster** | `Backlog_allocation` tab | Who is working the Backlog activity → separate capacity pool |
+| **Backlog demand** | `Scheme_View` tab | Open cases per scheme (`Grand Total` column) → demand for the Backlog activity |
 
 **Data quirks this script accounts for:**
 - `AHT Validation` has one row per **entity+scheme** (reconciliation key, e.g. `US-VISA`), not one row per scheme — AHT is averaged across all entities sharing a scheme.
 - `Rota` is scheme-first: each row is one reconciliation key, and the reviewer covering it on a given weekday sits *inside* that day's cell (Mon–Fri columns), not in a per-reviewer row. Its layout is hard-coded in `CONFIG.rota.matrix` rather than header-detected, because it's too irregular for generic detection — see `probeRota()`.
 - `Scheme_View` is a Google Sheets pivot table with no entity breakdown (its own note reads `**refine by entity`), so demand is computed at the plain-scheme level; Rota's entity-level rows are rolled up to match via the AHT-derived lookup above.
-- Each reviewer is typically rostered for **many** schemes at once (all `DAILY`), not one — recommendations only ever assign a reviewer work within schemes they're actually rostered for.
+- Each Rota reviewer is typically rostered for **many** schemes at once (all `DAILY`), not one.
+- `Backlog_allocation` currently only has one row (`"Week 1" → "Nooreena, Kelina, Amit"`), with no date/week mapping yet — every name in that tab is treated as available for the whole filtered window. Once real per-week dates are added, wire them into `readBacklogTeamRoster_` the same way Rota's dates are read.
+- The Rota reviewers and the Backlog roster are **different people** in the current data (no name overlap) — the reporter filter lists both, so either group can be selected individually.
 
 **Calculations**
 
-- **Capacity (per employee)** = working days in range × 7 hrs (× 60 = minutes).
-- **Demand (per scheme)** = backlog cases (`Grand Total`) × new AHT (minutes), scheme name matched via the Reconciliation → Scheme lookup.
-- **Team capacity** = sum of every rostered employee's capacity.
-- **Utilisation** = total demand ÷ team capacity.
-- **Recommended allocation** — two selectable strategies, both scoped to each reporter's real scheme rostering (never assigns a scheme a reporter doesn't actually cover):
-  - *Proportional* (default): each reporter's own capacity is split across just the schemes they're rostered for, weighted by how backlogged each one is.
-  - *Greedy*: clear the biggest backlog first, filling each scheme from the reporters rostered for it (biggest remaining capacity first) before moving to the next — produces focused, fewer-scheme assignments per person.
+**Rota takes priority.** A person's Rota-listed reconciliation consumes their
+full day — only genuinely *remaining* time (days in range they weren't
+Rota-rostered on) counts toward Backlog capacity. With the current disjoint
+rosters this equals every day for everyone in `Backlog_allocation`, but the
+calculation is per-person, so it stays correct if the same person is ever
+rostered on both. Backlog's demand list is likewise scoped to whatever
+schemes are actually active on Rota for the current view — a scheme with
+open backlog but no Rota coverage today is out of scope (falls back to
+showing everything if Rota has no data at all for the current filter, so the
+dashboard never silently zeroes out).
+
+- **Rota capacity (per reviewer)** = working days in range × 7 hrs.
+- **Backlog capacity (per person)** = (working days Rota has data for in range, minus any of those days that person was Rota-rostered on) × 7 hrs.
+- **Backlog demand (per scheme)** = backlog cases (`Grand Total`) × new AHT (minutes), scheme name matched via the Reconciliation → Scheme lookup, restricted to schemes currently active on Rota.
+- **Backlog utilisation** = total demand ÷ Backlog team capacity — "are they fully utilised for the 7 hours, based on the AHT?", shown both team-wide and per person.
+- **Recommended Backlog allocation** — two selectable strategies (unlike Rota, there's no per-person scheme roster for Backlog yet, so everyone is eligible for every scheme currently in view):
+  - *Proportional* (default): each person's own capacity is split across schemes weighted by how backlogged each one is.
+  - *Greedy*: clear the biggest backlog first, filling each scheme from the Backlog roster (biggest remaining capacity first) before moving to the next.
   Any manual override saved from the dashboard takes precedence under either.
 
-**Charts**: demand-vs-capacity by scheme, capacity per employee, and a
-**planned-allocation-by-employee** chart (recommended hours per person, stacked
-and coloured by scheme).
+**Charts**: Rota capacity per reviewer (coverage only); Backlog demand-vs-capacity
+by scheme; Backlog capacity per employee (required-vs-capacity, with a
+spare/full/over utilisation pill); and a Backlog planned-allocation-by-employee
+chart (recommended hours per person, stacked and coloured by scheme).
 
 **Filters** (one row above the charts): date from/to (+ Today / 7d / 30d / MTD /
-All presets), reporter (employee), scheme (multi-select), and allocation
-strategy.
+All presets), reporter (employee — from either roster), scheme (multi-select),
+and allocation strategy.
 
 **Theme** — light, Checkout-branded (indigo accent `--brand`, easily swapped to
 your exact pantone). Chart series use a colour-blind-validated categorical
