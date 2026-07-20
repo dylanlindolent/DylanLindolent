@@ -250,8 +250,12 @@
         <!-- Per-employee capacity -->
         <div class="card">
           <h2>Capacity per employee</h2>
-          <p class="desc">Working days in range × 7 hrs. Filtered to the selected employee when set.</p>
-          <div class="bars single" id="repBars"></div>
+          <p class="desc">Required hours (AHT-based, solid) against 7hr/day capacity (faded). % shows utilisation — are they fully occupied for their 7 hours?</p>
+          <div class="legend">
+            <div class="item"><span class="swatch" style="background:var(--muted)"></span>Required (AHT-based) — each person's own colour</div>
+            <div class="item"><span class="swatch" style="background:var(--muted);opacity:.35"></span>7hr/day capacity — same colour, faded</div>
+          </div>
+          <div class="bars" id="repBars"></div>
         </div>
       </div>
 
@@ -306,7 +310,7 @@
       dateRange: { min: '2026-07-13', max: '2026-07-20' } };
     var MOCK_DATA = { ok: true, generatedAt: '2026-07-20 09:12', data: {
       assumptions: { productivityHoursPerDay: 7, dayMinutes: 420 },
-      kpis: { teamCapacityHours: 245, demandHours: 288.5, utilisation: 117.8, backlogCases: 1842, headcount: 7, workingDays: 35, surplusHours: -43.5, daysToClear: 9.8 },
+      kpis: { teamCapacityHours: 245, teamSize: 7, demandHours: 288.5, utilisation: 117.8, backlogCases: 1842, headcount: 6.8, workingDays: 35, surplusHours: -43.5, daysToClear: 9.8 },
       schemes: [
         { scheme:'Chargeback', backlogCases:520, ahtMinutes:14.5, ahtEstimated:false, demandHours:125.7, demandMinutes:7540 },
         { scheme:'Fraud', backlogCases:410, ahtMinutes:9.0, ahtEstimated:false, demandHours:61.5, demandMinutes:3690 },
@@ -317,13 +321,13 @@
         { scheme:'Amex', backlogCases:40, ahtMinutes:6.8, ahtEstimated:false, demandHours:4.5, demandMinutes:272 }
       ],
       reporters: [
-        { reporter:'Amelia Chen', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback' },
-        { reporter:'Ben Okafor', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Fraud' },
-        { reporter:'Carla Diaz', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Visa' },
-        { reporter:'Dmitri Volkov', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Retrieval' },
-        { reporter:'Elena Rossi', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback' },
-        { reporter:'Farid Khan', days:4, capacityHours:28, capacityMinutes:1680, currentScheme:'Mastercard' },
-        { reporter:'Grace Lin', days:6, capacityHours:42, capacityMinutes:2520, currentScheme:'Fraud' }
+        { reporter:'Amelia Chen', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback', requiredHours:14.9, utilisationPct:42.6 },
+        { reporter:'Ben Okafor', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Fraud', requiredHours:11.1, utilisationPct:31.7 },
+        { reporter:'Carla Diaz', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Visa', requiredHours:8.6, utilisationPct:24.6 },
+        { reporter:'Dmitri Volkov', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Retrieval', requiredHours:10.4, utilisationPct:29.7 },
+        { reporter:'Elena Rossi', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback', requiredHours:14.9, utilisationPct:42.6 },
+        { reporter:'Farid Khan', days:4, capacityHours:28, capacityMinutes:1680, currentScheme:'Mastercard', requiredHours:6.1, utilisationPct:21.8 },
+        { reporter:'Grace Lin', days:6, capacityHours:42, capacityMinutes:2520, currentScheme:'Fraud', requiredHours:48.0, utilisationPct:114.3 }
       ],
       recommendations: [
         { reporter:'Grace Lin', scheme:'Chargeback', recommendedCases:74, recommendedHours:17.9, allocatedCases:74, overridden:false, capacityHours:42 },
@@ -479,12 +483,12 @@
       var utilClass = util > 100 ? 'bad' : (util > 85 ? 'warn' : 'good');
       var surplusClass = k.surplusHours < 0 ? 'bad' : 'good';
       var tiles = [
-        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours (' + k.workingDays + ' working days)' },
+        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours across ' + fmt(k.teamSize) + ' people' },
         { k: 'Demand (backlog)', v: fmt(k.demandHours), u: fmt(k.backlogCases) + ' cases' },
         { k: 'Utilisation', v: fmt(util) + '<small>%</small>', u: '<span class="pill ' + utilClass + '">' + (util > 100 ? 'Over capacity' : 'Within capacity') + '</span>' },
-        { k: 'Head-count', v: fmt(k.headcount), u: 'rostered employees' },
+        { k: 'Head-count', v: fmt(k.headcount), u: 'available per day, avg.' },
         { k: 'Surplus / deficit', v: (k.surplusHours >= 0 ? '+' : '') + fmt(k.surplusHours), u: '<span class="pill ' + surplusClass + '">' + (k.surplusHours >= 0 ? 'spare hrs' : 'short hrs') + '</span>' },
-        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current head-count' }
+        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current daily head-count' }
       ];
       $('kpis').innerHTML = tiles.map(function (t) {
         return '<div class="tile"><div class="k">' + t.k + '</div><div class="v">' + t.v + '</div><div class="u">' + t.u + '</div></div>';
@@ -527,18 +531,25 @@
     // ---- Reporter bars ----
     function renderRepBars(reps) {
       if (!reps.length) { $('repBars').innerHTML = '<p class="muted">No rostered employees for this selection.</p>'; return; }
-      var max = reps.reduce(function (m, r) { return Math.max(m, r.capacityHours); }, 0) || 1;
+      var max = reps.reduce(function (m, r) { return Math.max(m, r.capacityHours, r.requiredHours || 0); }, 0) || 1;
       $('repBars').innerHTML = reps.map(function (r, i) {
-        var w = r.capacityHours / max * 100;
+        var capW = r.capacityHours / max * 100;
+        var reqW = (r.requiredHours || 0) / max * 100;
         var color = 'var(' + SERIES[i % SERIES.length] + ')';
+        var util = r.utilisationPct || 0;
+        var pillClass = util > 100 ? 'bad' : (util >= 85 ? 'good' : 'warn');
+        var pillText = util > 100 ? 'over' : (util >= 85 ? 'full' : 'spare');
         return '<div class="bar-row">' +
           '<div class="name" title="' + esc(r.reporter) + '">' + esc(r.reporter) + '</div>' +
           '<div class="track" data-tip="<b>' + esc(r.reporter) + '</b><br>' + r.days + ' working days' +
             '<br>Capacity: ' + fmt(r.capacityHours) + ' hrs' +
+            '<br>Required (AHT-based): ' + fmt(r.requiredHours || 0) + ' hrs' +
+            '<br>Utilisation: ' + fmt(util) + '%' +
             (r.currentScheme ? '<br>Rota scheme: ' + esc(r.currentScheme) : '') + '">' +
-            '<div class="seg" style="width:' + w + '%;background:' + color + ';top:0;height:100%"></div>' +
+            '<div class="seg demand" style="width:' + reqW + '%;background:' + color + '"></div>' +
+            '<div class="seg cap" style="width:' + capW + '%;background:' + color + ';opacity:.35"></div>' +
           '</div>' +
-          '<div class="val">' + fmt(r.capacityHours) + 'h</div>' +
+          '<div class="val">' + fmt(util) + '% <span class="pill ' + pillClass + '">' + pillText + '</span></div>' +
         '</div>';
       }).join('');
       bindTips('repBars');

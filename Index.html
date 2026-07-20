@@ -250,8 +250,12 @@
         <!-- Per-employee capacity -->
         <div class="card">
           <h2>Capacity per employee</h2>
-          <p class="desc">Working days in range × 7 hrs. Filtered to the selected employee when set.</p>
-          <div class="bars single" id="repBars"></div>
+          <p class="desc">Required hours (AHT-based, solid) against 7hr/day capacity (faded). % shows utilisation — are they fully occupied for their 7 hours?</p>
+          <div class="legend">
+            <div class="item"><span class="swatch" style="background:var(--muted)"></span>Required (AHT-based) — each person's own colour</div>
+            <div class="item"><span class="swatch" style="background:var(--muted);opacity:.35"></span>7hr/day capacity — same colour, faded</div>
+          </div>
+          <div class="bars" id="repBars"></div>
         </div>
       </div>
 
@@ -418,12 +422,12 @@
       var utilClass = util > 100 ? 'bad' : (util > 85 ? 'warn' : 'good');
       var surplusClass = k.surplusHours < 0 ? 'bad' : 'good';
       var tiles = [
-        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours (' + k.workingDays + ' working days)' },
+        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours across ' + fmt(k.teamSize) + ' people' },
         { k: 'Demand (backlog)', v: fmt(k.demandHours), u: fmt(k.backlogCases) + ' cases' },
         { k: 'Utilisation', v: fmt(util) + '<small>%</small>', u: '<span class="pill ' + utilClass + '">' + (util > 100 ? 'Over capacity' : 'Within capacity') + '</span>' },
-        { k: 'Head-count', v: fmt(k.headcount), u: 'rostered employees' },
+        { k: 'Head-count', v: fmt(k.headcount), u: 'available per day, avg.' },
         { k: 'Surplus / deficit', v: (k.surplusHours >= 0 ? '+' : '') + fmt(k.surplusHours), u: '<span class="pill ' + surplusClass + '">' + (k.surplusHours >= 0 ? 'spare hrs' : 'short hrs') + '</span>' },
-        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current head-count' }
+        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current daily head-count' }
       ];
       $('kpis').innerHTML = tiles.map(function (t) {
         return '<div class="tile"><div class="k">' + t.k + '</div><div class="v">' + t.v + '</div><div class="u">' + t.u + '</div></div>';
@@ -466,18 +470,25 @@
     // ---- Reporter bars ----
     function renderRepBars(reps) {
       if (!reps.length) { $('repBars').innerHTML = '<p class="muted">No rostered employees for this selection.</p>'; return; }
-      var max = reps.reduce(function (m, r) { return Math.max(m, r.capacityHours); }, 0) || 1;
+      var max = reps.reduce(function (m, r) { return Math.max(m, r.capacityHours, r.requiredHours || 0); }, 0) || 1;
       $('repBars').innerHTML = reps.map(function (r, i) {
-        var w = r.capacityHours / max * 100;
+        var capW = r.capacityHours / max * 100;
+        var reqW = (r.requiredHours || 0) / max * 100;
         var color = 'var(' + SERIES[i % SERIES.length] + ')';
+        var util = r.utilisationPct || 0;
+        var pillClass = util > 100 ? 'bad' : (util >= 85 ? 'good' : 'warn');
+        var pillText = util > 100 ? 'over' : (util >= 85 ? 'full' : 'spare');
         return '<div class="bar-row">' +
           '<div class="name" title="' + esc(r.reporter) + '">' + esc(r.reporter) + '</div>' +
           '<div class="track" data-tip="<b>' + esc(r.reporter) + '</b><br>' + r.days + ' working days' +
             '<br>Capacity: ' + fmt(r.capacityHours) + ' hrs' +
+            '<br>Required (AHT-based): ' + fmt(r.requiredHours || 0) + ' hrs' +
+            '<br>Utilisation: ' + fmt(util) + '%' +
             (r.currentScheme ? '<br>Rota scheme: ' + esc(r.currentScheme) : '') + '">' +
-            '<div class="seg" style="width:' + w + '%;background:' + color + ';top:0;height:100%"></div>' +
+            '<div class="seg demand" style="width:' + reqW + '%;background:' + color + '"></div>' +
+            '<div class="seg cap" style="width:' + capW + '%;background:' + color + ';opacity:.35"></div>' +
           '</div>' +
-          '<div class="val">' + fmt(r.capacityHours) + 'h</div>' +
+          '<div class="val">' + fmt(util) + '% <span class="pill ' + pillClass + '">' + pillText + '</span></div>' +
         '</div>';
       }).join('');
       bindTips('repBars');

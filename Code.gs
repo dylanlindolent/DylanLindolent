@@ -356,13 +356,21 @@ function buildModel_(filters) {
   const schemeFilter = (filters.schemes && filters.schemes.length)
     ? new Set(filters.schemes) : null;
   const reporterFilter = filters.reporter || '';
-  const from = filters.dateFrom ? toDate_(filters.dateFrom) : null;
-  const to = filters.dateTo ? toDate_(filters.dateTo) : null;
+  // Compared as "yyyy-MM-dd" strings, not Date objects — parseUkDate_ builds
+  // Rota's dates in the script's local timezone, while a naive
+  // `new Date("2026-07-20")` filter boundary parses as UTC midnight. Those
+  // two can land on different sides of midnight depending on the deployed
+  // script's timezone/DST, silently dropping rows (e.g. the whole team
+  // showing 0 capacity). Formatting both sides through fmtDate_ before
+  // comparing avoids that entirely.
+  const from = filters.dateFrom || '';
+  const to = filters.dateTo || '';
 
   const inDate = function (d) {
     if (!d) return !from && !to;         // rows with no date only survive when no date filter
-    if (from && d < from) return false;
-    if (to && d > to) return false;
+    const key = fmtDate_(d);
+    if (from && key < from) return false;
+    if (to && key > to) return false;
     return true;
   };
 
@@ -378,6 +386,7 @@ function buildModel_(filters) {
   // ---- Rota -> working slots per reporter ------------------------------
   const dayMinutes = CONFIG.productivityHoursPerDay * CONFIG.minutesPerHour;
   const perReporter = {};        // reporter -> {days, minutes, dates:Set}
+  const teamDayReporters = {};   // dayKey -> { reporterName: true } — who's rostered each calendar day
   let teamWorkingSlots = 0;
 
   rotaRows.forEach(function (r) {
@@ -399,7 +408,18 @@ function buildModel_(filters) {
     }
     const plainScheme = r.scheme ? schemeFor_(r.scheme) : '';
     if (plainScheme) rep.rotaScheme[plainScheme] = (rep.rotaScheme[plainScheme] || 0) + 1;
+
+    (teamDayReporters[dayKey] || (teamDayReporters[dayKey] = {}))[r.reporter] = true;
   });
+
+  // "Available headcount for the day" — averaged across every calendar day
+  // in the filtered window (a single-day filter makes this exactly that
+  // day's headcount; a multi-day range gives the typical daily staffing
+  // level, which is what actually limits day-to-day throughput).
+  const dayKeysWorked = Object.keys(teamDayReporters);
+  const avgDailyHeadcount = dayKeysWorked.length
+    ? round1_(dayKeysWorked.reduce(function (s, k) { return s + Object.keys(teamDayReporters[k]).length; }, 0) / dayKeysWorked.length)
+    : 0;
 
   const reporters = Object.keys(perReporter).map(function (k) {
     const rep = perReporter[k];
@@ -446,12 +466,28 @@ function buildModel_(filters) {
   // (greedy). Never assigns work outside a reporter's real scheme coverage.
   const recommendations = recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides, filters);
 
+  // ---- Per-employee utilisation ------------------------------------------
+  // Required minutes = the AHT-driven work their own recommendations add up
+  // to (i.e. backlog cases they're assigned x new AHT), against their 7hr/day
+  // capacity — "are they fully utilised for the 7 hours, based on the AHT?"
+  const requiredMinutesByReporter = {};
+  recommendations.forEach(function (r) {
+    requiredMinutesByReporter[r.reporter] = (requiredMinutesByReporter[r.reporter] || 0) + r.recommendedHours * CONFIG.minutesPerHour;
+  });
+  reporters.forEach(function (rep) {
+    const requiredMinutes = requiredMinutesByReporter[rep.reporter] || 0;
+    rep.requiredHours = round1_(requiredMinutes / CONFIG.minutesPerHour);
+    rep.utilisationPct = rep.capacityMinutes > 0 ? round1_((requiredMinutes / rep.capacityMinutes) * 100) : 0;
+  });
+
   // ---- KPIs -------------------------------------------------------------
+  // Utilisation = how much of the team's 7hr/day capacity the AHT-based
+  // demand (backlog cases x new AHT) consumes.
   const utilisation = teamCapacityMinutes > 0
     ? round1_((totalDemandMinutes / teamCapacityMinutes) * 100) : 0;
   const surplusMinutes = teamCapacityMinutes - totalDemandMinutes;
-  const daysToClear = (teamCapacityMinutes > 0)
-    ? round1_(totalDemandMinutes / dayMinutes / Math.max(reporters.length, 1)) : 0;
+  const daysToClear = (avgDailyHeadcount > 0)
+    ? round1_(totalDemandMinutes / dayMinutes / avgDailyHeadcount) : 0;
 
   return {
     assumptions: {
@@ -460,10 +496,11 @@ function buildModel_(filters) {
     },
     kpis: {
       teamCapacityHours: round1_(teamCapacityMinutes / CONFIG.minutesPerHour),
+      teamSize: reporters.length, // distinct people rostered anywhere in the filtered window
       demandHours: round1_(totalDemandMinutes / CONFIG.minutesPerHour),
       utilisation: utilisation,
       backlogCases: totalBacklogCases,
-      headcount: reporters.length,
+      headcount: avgDailyHeadcount, // available headcount for the day (avg/day across the window)
       workingDays: teamWorkingSlots,
       surplusHours: round1_(surplusMinutes / CONFIG.minutesPerHour),
       daysToClear: daysToClear
