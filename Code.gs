@@ -4,18 +4,28 @@
  * Pulls live data from three Google Sheets and computes a capacity plan
  * per employee (reporter) and for the team:
  *
- *   1. AHT analysis   -> "AHT Validation" tab, column E ("new AHT", minutes/case)
- *   2. Rota           -> "Rota" tab (who is working, which day, which scheme)
- *   3. Backlog        -> "Backlog_Team Planning" tab (open cases per scheme)
+ *   1. AHT analysis -> "AHT Validation" tab. Column A = Reconciliation key
+ *      (entity+scheme, e.g. "US-VISA"), column B = Scheme, column E = "new
+ *      AHT" (minutes/case). Used both for AHT and as the lookup that
+ *      translates Rota's reconciliation keys into plain scheme names.
+ *   2. Rota -> "Rota" tab. Scheme-first matrix: each row is one
+ *      reconciliation key, and the reviewer covering it on a given weekday
+ *      sits inside that day's cell (column layout is hard-coded in
+ *      CONFIG.rota.matrix — see readRota_ — because this sheet's layout is
+ *      too irregular for generic header-based detection).
+ *   3. Backlog -> "Scheme_View" tab (a Google Sheets pivot). Real header is
+ *      row 2; "Grand Total" is the open-case count per scheme. This pivot is
+ *      scheme-only (no entity breakdown), so demand is computed at the plain
+ *      scheme level and Rota's entity-level rows are rolled up to match.
  *
  * Core assumption: 7 productive hours per employee per working day.
  *
- * The three source sheets are owned/maintained by other people and their
- * exact column layouts can change, so this script DOES NOT hard-code column
- * positions (except the explicitly requested AHT column E). Instead it
- * detects columns by header name using the candidate lists in CONFIG. If a
- * layout differs, run `diagnostics()` from the editor (View > Logs) to see
- * the detected headers and adjust the candidate lists below.
+ * AHT and Backlog columns are still detected by header name (candidate lists
+ * in CONFIG) since those two tabs are simple flat tables. If a layout
+ * differs, run `diagnostics()` from the editor (View > Logs) to see the
+ * detected headers and adjust the candidate lists below. Rota's layout is
+ * hard-coded (see above) — if that sheet's structure changes, re-run
+ * `probeRota()` and adjust CONFIG.rota.matrix.
  *
  * Manual allocation changes made on the dashboard are written back into the
  * ROTA spreadsheet (into an "Dashboard Allocations" tab, created on demand),
@@ -36,6 +46,7 @@ const CONFIG = {
     ahtColumnLetter: 'E',
     ahtUnit: 'minutes',                // 'minutes' | 'seconds' | 'hours'
     columns: {
+      reconciliation: ['reconciliation', 'reconciliation key', 'recon key', 'recon'],
       scheme:   ['scheme', 'schemes', 'claim type', 'type', 'reason', 'reason code', 'category', 'queue', 'product'],
       reporter: ['reporter', 'employee', 'agent', 'analyst', 'name', 'owner'] // optional per-agent AHT
     }
@@ -44,31 +55,36 @@ const CONFIG = {
   rota: {
     sheetId: '1-K8fLgvU7h52ZYdEwEfZR5q3gYSyURjsCVJRlwB_K-g',
     tab: 'Rota',
-    headerRow: 1,
     allocationsTab: 'Dashboard Allocations', // written back into the rota file
-    columns: {
-      reporter: ['reporter', 'employee', 'agent', 'name', 'analyst', 'team member', 'person'],
-      date:     ['date', 'day', 'shift date', 'rota date', 'work date'],
-      status:   ['status', 'shift', 'activity', 'availability', 'attendance', 'state'],
-      scheme:   ['scheme', 'allocation', 'assigned scheme', 'queue', 'assigned'],
-      hours:    ['hours', 'productive hours', 'capacity hours', 'available hours']
-    },
-    // values (case-insensitive, matched as substrings) that mean "not working"
-    nonWorkingStatuses: [
-      'off', 'day off', 'rest', 'annual leave', 'al', 'holiday', 'hol', 'leave',
-      'sick', 'absent', 'absence', 'bank holiday', 'bh', 'lieu', 'toil', 'n/a', 'na'
-    ],
-    // if a status is neither non-working nor blank it is treated as working.
-    // Blank cells in a matrix layout are treated as NOT working.
-    trainingStatuses: ['training', 'train', 'meeting', 'admin', '1:1', 'coaching']
+    // The Rota tab is scheme-first, not reviewer-first: each row is one
+    // reconciliation key (entity+scheme, e.g. "US-VISA"), and the reviewer
+    // covering it on a given weekday sits INSIDE that day's cell. Row 1 is
+    // just "MON".."FRI" labels; row 2 holds the real per-day dates for the
+    // first week block. A second Mon-Fri block exists further right but is
+    // a stale/unused leftover (confirmed with the sheet owner) and is
+    // intentionally not read. All positions are 0-based column indices
+    // (column A = 0), confirmed against the real sheet via probeRota() —
+    // re-run that and adjust here if the sheet's layout changes.
+    matrix: {
+      dateHeaderRow: 2,          // row with the real Mon-Fri dates
+      dataStartRow: 3,           // first scheme row
+      priorityCol: 1,            // column B
+      frequencyCol: 2,           // column C
+      reconciliationKeyCol: 3,   // column D
+      dayCols: [4, 5, 6, 7, 8]   // columns E-I = Mon-Fri, current week only
+    }
   },
 
   backlog: {
     sheetId: '1-ywS9-yFh0rJYwX421uADNZbr3UjgAWVcxkB1kfsQJE',
-    tab: 'Backlog_Team Planning',
-    headerRow: 1,
+    tab: 'Scheme_View',
+    // Real header is row 2 — row 1 just has "COUNTA of Reporter"/"Status"
+    // labels left over from the pivot table this tab is built from.
+    headerRow: 2,
     columns: {
       scheme: ['scheme', 'queue', 'claim type', 'type', 'category', 'product', 'reason'],
+      // "Grand Total" (sum of the status-breakdown columns) is the open
+      // backlog volume per scheme; matched here via the 'total' candidate.
       volume: ['backlog', 'volume', 'open', 'outstanding', 'wip', 'cases', 'count', 'tickets', 'items', 'total'],
       date:   ['date', 'week', 'as of', 'week commencing', 'w/c']
     }
@@ -101,10 +117,12 @@ function getFilterOptions() {
     const backlog = readBacklog_();
     const rota = readRota_();
 
+    // Rota's own "scheme" values are raw entity-level reconciliation keys
+    // (e.g. "US-VISA"), not plain scheme names, so they're excluded here —
+    // AHT and Backlog already cover the full plain-scheme vocabulary.
     const schemes = uniqueSorted_(
       aht.map(function (r) { return r.scheme; })
         .concat(backlog.map(function (r) { return r.scheme; }))
-        .concat(rota.map(function (r) { return r.scheme; }))
     );
     const reporters = uniqueSorted_(rota.map(function (r) { return r.reporter; }));
 
@@ -216,7 +234,9 @@ function listTabNames() {
  */
 function diagnostics() {
   const out = [];
-  [['AHT', CONFIG.aht], ['ROTA', CONFIG.rota], ['BACKLOG', CONFIG.backlog]].forEach(function (pair) {
+
+  // AHT and Backlog are simple flat tables — use generic header detection.
+  [['AHT', CONFIG.aht], ['BACKLOG', CONFIG.backlog]].forEach(function (pair) {
     const label = pair[0], cfg = pair[1];
     try {
       const t = readTable_(cfg.sheetId, cfg.tab, cfg.headerRow);
@@ -234,6 +254,20 @@ function diagnostics() {
       }
     }
   });
+
+  // Rota's layout is hard-coded (CONFIG.rota.matrix), not header-detected —
+  // sanity-check it by running the real reader and reporting what it found.
+  try {
+    const rota = readRota_();
+    const days = uniqueSorted_(rota.map(function (r) { return r.date ? fmtDate_(r.date) : ''; }));
+    out.push('ROTA [' + CONFIG.rota.tab + ']  entries: ' + rota.length +
+      '  reviewers: ' + JSON.stringify(uniqueSorted_(rota.map(function (r) { return r.reporter; }))) +
+      '  days: ' + JSON.stringify(days));
+    out.push('   sample: ' + JSON.stringify(rota[0] || {}));
+  } catch (e) {
+    out.push('ROTA  ERROR: ' + e);
+  }
+
   const msg = out.join('\n');
   Logger.log(msg);
   return msg;
@@ -288,16 +322,35 @@ function buildModel_(filters) {
   const rotaRows = readRota_();
   const overrides = readAllocations_();
 
-  // ---- AHT per scheme (minutes/case). Prefer scheme-level; keep per-agent. -
-  const ahtByScheme = {};
+  // ---- AHT per scheme (minutes/case), averaged across every entity row for
+  // that scheme (AHT Validation has one row per reconciliation key, i.e. per
+  // entity+scheme). Also build the Reconciliation -> Scheme lookup used to
+  // translate Rota's entity-level rows into the plain scheme names that
+  // Scheme_View (backlog) and this AHT aggregation both use. --------------
+  const ahtSums = {};             // scheme -> { sum, n }
   const ahtByAgentScheme = {};
+  const schemeByReconciliation = {};
   ahtRows.forEach(function (r) {
+    if (r.reconciliation && r.scheme) {
+      schemeByReconciliation[normalize_(r.reconciliation)] = r.scheme;
+    }
     if (!r.scheme || !(r.aht > 0)) return;
-    // last non-empty wins for scheme-level; average would also be valid.
-    ahtByScheme[r.scheme] = r.aht;
+    const bucket = ahtSums[r.scheme] || (ahtSums[r.scheme] = { sum: 0, n: 0 });
+    bucket.sum += r.aht;
+    bucket.n += 1;
     if (r.reporter) ahtByAgentScheme[r.reporter + '||' + r.scheme] = r.aht;
   });
+  const ahtByScheme = {};
+  Object.keys(ahtSums).forEach(function (s) { ahtByScheme[s] = ahtSums[s].sum / ahtSums[s].n; });
   const avgAht = avg_(Object.keys(ahtByScheme).map(function (k) { return ahtByScheme[k]; })) || 0;
+
+  // Rota rows carry a raw reconciliation key (e.g. "US-VISA") in .scheme;
+  // translate to the plain scheme name Scheme_View/AHT use for matching.
+  // Falls back to the raw key if it isn't found in AHT Validation (that
+  // assignment just won't match any known demand scheme downstream).
+  const schemeFor_ = function (reconciliationKeyOrScheme) {
+    return schemeByReconciliation[normalize_(reconciliationKeyOrScheme)] || reconciliationKeyOrScheme;
+  };
 
   // ---- Filters ----------------------------------------------------------
   const schemeFilter = (filters.schemes && filters.schemes.length)
@@ -344,7 +397,8 @@ function buildModel_(filters) {
       rep.minutes += mins;
       teamWorkingSlots += 1;
     }
-    if (r.scheme) rep.rotaScheme[r.scheme] = (rep.rotaScheme[r.scheme] || 0) + 1;
+    const plainScheme = r.scheme ? schemeFor_(r.scheme) : '';
+    if (plainScheme) rep.rotaScheme[plainScheme] = (rep.rotaScheme[plainScheme] || 0) + 1;
   });
 
   const reporters = Object.keys(perReporter).map(function (k) {
@@ -354,7 +408,10 @@ function buildModel_(filters) {
       days: rep.days,
       capacityHours: round1_(rep.minutes / CONFIG.minutesPerHour),
       capacityMinutes: rep.minutes,
-      currentScheme: topKey_(rep.rotaScheme)
+      currentScheme: topKey_(rep.rotaScheme),
+      // every plain scheme this reporter is actually rostered for — used to
+      // restrict recommendations to schemes they're really assigned to.
+      schemes: Object.keys(rep.rotaScheme)
     };
   }).sort(function (a, b) { return b.capacityMinutes - a.capacityMinutes; });
 
@@ -383,9 +440,10 @@ function buildModel_(filters) {
   const totalBacklogCases = schemes.reduce(function (s, x) { return s + x.backlogCases; }, 0);
 
   // ---- Recommended allocation ------------------------------------------
-  // Distribute available team capacity across schemes in proportion to their
-  // demand (largest backlog first), then split each scheme's assigned minutes
-  // across rostered reporters proportionally to each reporter's capacity.
+  // See recommendAllocation_ — each reporter's own capacity is split only
+  // across the schemes they're actually rostered for (proportional), or
+  // schemes are filled from their rostered reporters biggest-backlog-first
+  // (greedy). Never assigns work outside a reporter's real scheme coverage.
   const recommendations = recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides, filters);
 
   // ---- KPIs -------------------------------------------------------------
@@ -419,45 +477,45 @@ function buildModel_(filters) {
 
 /**
  * Recommended allocation. Two strategies (chosen via filters.strategy):
- *   'proportional' (default) — demand-weighted split across all employees.
- *   'greedy'                 — clear the biggest backlog first, filling one
- *                              scheme from the capacity pool before the next.
+ *   'proportional' (default) — each reporter's own capacity is split across
+ *                              only the schemes they're actually rostered
+ *                              for (rep.schemes), weighted by demand.
+ *   'greedy'                 — clear the biggest backlog first, filling each
+ *                              scheme from the reporters rostered for it
+ *                              (biggest remaining capacity first) before
+ *                              moving to the next scheme.
+ * Both respect Rota's real scheme rostering — a reporter is never assigned
+ * work for a scheme they aren't actually covering.
  */
 function recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides, filters) {
   const strategy = (filters && filters.strategy) || 'proportional';
   if (!reporters.length) return [];
   return strategy === 'greedy'
     ? greedyAllocation_(schemes, reporters, overrides)
-    : proportionalAllocation_(schemes, reporters, teamCapacityMinutes, overrides);
+    : proportionalAllocation_(schemes, reporters, overrides);
 }
 
-function proportionalAllocation_(schemes, reporters, teamCapacityMinutes, overrides) {
+function proportionalAllocation_(schemes, reporters, overrides) {
   const recs = [];
   if (!reporters.length) return recs;
 
-  const totalDemand = schemes.reduce(function (s, x) { return s + x.demandMinutes; }, 0);
-  const totalRepMinutes = reporters.reduce(function (s, r) { return s + r.capacityMinutes; }, 0) || 1;
+  const schemeByName = {};
+  schemes.forEach(function (sc) { schemeByName[sc.scheme] = sc; });
 
-  // How much capacity (minutes) each scheme should get.
-  const schemeShare = {};
-  schemes.forEach(function (sc) {
-    schemeShare[sc.scheme] = totalDemand > 0
-      ? Math.min(sc.demandMinutes, teamCapacityMinutes * (sc.demandMinutes / totalDemand))
-      : 0;
-  });
-
-  // Build override lookup: reporter||scheme -> cases (per current filter window)
   const ovMap = {};
-  overrides.forEach(function (o) {
-    ovMap[o.reporter + '||' + o.scheme] = o.cases;
-  });
+  overrides.forEach(function (o) { ovMap[o.reporter + '||' + o.scheme] = o.cases; });
 
   reporters.forEach(function (rep) {
-    const repFraction = rep.capacityMinutes / totalRepMinutes;
-    // give this reporter their share of each scheme's assigned capacity
-    schemes.forEach(function (sc) {
-      const minutes = schemeShare[sc.scheme] * repFraction;
-      if (minutes <= 0 && !ovMap[rep.reporter + '||' + sc.scheme]) return;
+    // only split this reporter's own capacity across schemes they actually
+    // cover, in proportion to how backlogged each of those schemes is.
+    const eligible = (rep.schemes || []).map(function (s) { return schemeByName[s]; }).filter(Boolean);
+    if (!eligible.length) return;
+
+    const portfolioDemand = eligible.reduce(function (s, sc) { return s + sc.demandMinutes; }, 0);
+
+    eligible.forEach(function (sc) {
+      const share = portfolioDemand > 0 ? (sc.demandMinutes / portfolioDemand) : (1 / eligible.length);
+      const minutes = rep.capacityMinutes * share;
       const cases = sc.ahtMinutes > 0 ? minutes / sc.ahtMinutes : 0;
       const overrideKey = rep.reporter + '||' + sc.scheme;
       const overridden = Object.prototype.hasOwnProperty.call(ovMap, overrideKey);
@@ -473,33 +531,36 @@ function proportionalAllocation_(schemes, reporters, teamCapacityMinutes, overri
     });
   });
 
-  // Keep only the meaningful lines (reporter's top schemes) to avoid noise:
-  // sort by recommended hours desc.
+  appendUnplacedOverrides_(recs, ovMap, reporters);
   recs.sort(function (a, b) { return b.recommendedHours - a.recommendedHours; });
   return recs;
 }
 
 /**
  * Greedy allocation — walk schemes from largest backlog to smallest and fill
- * each one from the team's remaining capacity (biggest-capacity employees
- * first) before moving on. Produces focused assignments (fewer schemes per
- * person) rather than spreading everyone thinly across every scheme.
+ * each one from the reporters actually rostered for it (biggest remaining
+ * capacity first) before moving to the next scheme. Produces focused
+ * assignments (fewer schemes per person) rather than spreading everyone
+ * thinly across every scheme they cover.
  */
 function greedyAllocation_(schemes, reporters, overrides) {
   const recs = [];
   const ovMap = {};
   overrides.forEach(function (o) { ovMap[o.reporter + '||' + o.scheme] = o.cases; });
 
-  // remaining capacity (minutes) per reporter; biggest capacity used first
-  const pool = reporters.slice().sort(function (a, b) { return b.capacityMinutes - a.capacityMinutes; });
   const remaining = {};
-  pool.forEach(function (r) { remaining[r.reporter] = r.capacityMinutes; });
+  reporters.forEach(function (r) { remaining[r.reporter] = r.capacityMinutes; });
 
   const emitted = {}; // reporter||scheme -> true
 
   schemes.forEach(function (sc) {
     let need = sc.demandMinutes;
     if (need <= 0) return;
+    // only reporters actually rostered for this scheme, most remaining capacity first
+    const pool = reporters
+      .filter(function (r) { return (r.schemes || []).indexOf(sc.scheme) !== -1; })
+      .sort(function (a, b) { return remaining[b.reporter] - remaining[a.reporter]; });
+
     for (let i = 0; i < pool.length && need > 0.01; i++) {
       const rep = pool[i];
       const avail = remaining[rep.reporter];
@@ -523,9 +584,17 @@ function greedyAllocation_(schemes, reporters, overrides) {
     }
   });
 
-  // surface any manual overrides that greedy didn't already place
+  appendUnplacedOverrides_(recs, ovMap, reporters, emitted);
+  recs.sort(function (a, b) { return b.recommendedHours - a.recommendedHours; });
+  return recs;
+}
+
+/** Surfaces manual overrides for (reporter, scheme) pairs the strategy didn't otherwise place. */
+function appendUnplacedOverrides_(recs, ovMap, reporters, emitted) {
+  const seen = emitted || {};
+  if (!emitted) recs.forEach(function (r) { seen[r.reporter + '||' + r.scheme] = true; });
   Object.keys(ovMap).forEach(function (key) {
-    if (emitted[key]) return;
+    if (seen[key]) return;
     const parts = key.split('||');
     const rep = reporters.filter(function (r) { return r.reporter === parts[0]; })[0];
     recs.push({
@@ -535,9 +604,6 @@ function greedyAllocation_(schemes, reporters, overrides) {
       capacityHours: rep ? rep.capacityHours : 0
     });
   });
-
-  recs.sort(function (a, b) { return b.recommendedHours - a.recommendedHours; });
-  return recs;
 }
 
 /* ============================ READERS ================================= */
@@ -553,6 +619,7 @@ function readAht_() {
   return t.rows.map(function (row) {
     const raw = row.__cells[ahtIdx];
     return {
+      reconciliation: cleanStr_(cols.reconciliation != null ? row.__cells[cols.reconciliation] : ''),
       scheme: cleanStr_(cols.scheme != null ? row.__cells[cols.scheme] : ''),
       reporter: cleanStr_(cols.reporter != null ? row.__cells[cols.reporter] : ''),
       aht: parseNum_(raw) * factor
@@ -570,63 +637,55 @@ function readBacklog_() {
       volume: cols.volume != null ? parseNum_(row.__cells[cols.volume]) : 0,
       date: cols.date != null ? toDate_(row.__cells[cols.date]) : null
     };
-  }).filter(function (r) { return r.scheme; });
+  }).filter(function (r) {
+    if (!r.scheme) return false;
+    // Scheme_View is a pivot table: skip its own "Grand Total" row and any
+    // "**note" rows (e.g. "**refine by entity") rather than real schemes.
+    if (r.scheme.toLowerCase().indexOf('grand total') !== -1) return false;
+    if (r.scheme.indexOf('**') === 0) return false;
+    return true;
+  });
 }
 
 /**
- * Rota reader. Supports two layouts, auto-detected:
- *   (a) LONG   : one row per (reporter, date) with a status column.
- *   (b) MATRIX : reporter in one column, date headers across the top, the
- *                cell value being the shift/status.
- * Emits a normalised list of { reporter, date, status, working, scheme, hours }.
+ * Rota reader — bespoke to the real "Rota" tab layout (see CONFIG.rota.matrix
+ * and the module doc comment): each row is one reconciliation key (entity +
+ * scheme), and the reviewer covering it on a given weekday sits inside that
+ * day's cell. Emits one entry per (reconciliation key, weekday) where a
+ * reviewer is actually assigned — .scheme holds the RAW reconciliation key
+ * (e.g. "US-VISA"); callers translate it to a plain scheme name via the
+ * AHT-derived Reconciliation -> Scheme lookup before matching against
+ * backlog/demand.
  */
 function readRota_() {
   const cfg = CONFIG.rota;
-  const t = readTable_(cfg.sheetId, cfg.tab, cfg.headerRow);
-  const cols = detectColumns_(t.headers, cfg.columns);
+  const m = cfg.matrix;
+  const ss = SpreadsheetApp.openById(cfg.sheetId);
+  const sheet = ss.getSheetByName(cfg.tab);
+  if (!sheet) throw new Error('Tab "' + cfg.tab + '" not found in ' + cfg.sheetId);
+  const values = sheet.getDataRange().getValues();
+  if (values.length < m.dataStartRow) return [];
 
-  // Date columns = header cells that parse as dates (MATRIX layout signal).
-  const dateCols = [];
-  t.headers.forEach(function (h, i) {
-    const d = toDate_(h);
-    if (d && !isNaN(d.getTime())) dateCols.push({ index: i, date: d });
-  });
+  const dateRow = values[m.dateHeaderRow - 1];
+  const dayDates = m.dayCols.map(function (col) { return parseUkDate_(dateRow[col]); });
 
   const out = [];
-  const isLong = cols.date != null && dateCols.length < 2;
-
-  if (isLong) {
-    t.rows.forEach(function (row) {
-      const reporter = cleanStr_(cols.reporter != null ? row.__cells[cols.reporter] : '');
-      if (!reporter) return;
-      const status = cleanStr_(cols.status != null ? row.__cells[cols.status] : '');
-      const date = cols.date != null ? toDate_(row.__cells[cols.date]) : null;
+  for (let i = m.dataStartRow - 1; i < values.length; i++) {
+    const row = values[i];
+    const reconciliationKey = cleanStr_(row[m.reconciliationKeyCol]);
+    if (!reconciliationKey) continue;
+    const frequency = cleanStr_(row[m.frequencyCol]);
+    m.dayCols.forEach(function (col, idx) {
+      const reviewer = cleanStr_(row[col]);
+      if (!reviewer) return;
       out.push({
-        __row: row.__row,
-        reporter: reporter,
-        date: date,
-        status: status,
-        working: isWorking_(status, true),
-        scheme: cleanStr_(cols.scheme != null ? row.__cells[cols.scheme] : ''),
-        hours: cols.hours != null ? parseNum_(row.__cells[cols.hours]) : null
-      });
-    });
-  } else {
-    // MATRIX: reporter column + one column per date
-    t.rows.forEach(function (row) {
-      const reporter = cleanStr_(cols.reporter != null ? row.__cells[cols.reporter] : '');
-      if (!reporter) return;
-      dateCols.forEach(function (dc) {
-        const val = cleanStr_(row.__cells[dc.index]);
-        out.push({
-          __row: row.__row,
-          reporter: reporter,
-          date: dc.date,
-          status: val,
-          working: isWorking_(val, false), // blank in matrix = not working
-          scheme: '',
-          hours: null
-        });
+        __row: i + 1,
+        reporter: reviewer,
+        date: dayDates[idx],
+        status: frequency,
+        working: true,
+        scheme: reconciliationKey,
+        hours: null
       });
     });
   }
@@ -705,16 +764,6 @@ function columnLetterToIndex_(letter) {
 
 /* ============================ SMALL HELPERS =========================== */
 
-function isWorking_(status, blankIsWorkingInLong) {
-  const s = normalize_(status);
-  if (!s) return !!blankIsWorkingInLong ? false : false; // blank never counts as working
-  const non = CONFIG.rota.nonWorkingStatuses;
-  for (let i = 0; i < non.length; i++) {
-    if (s.indexOf(normalize_(non[i])) !== -1) return false;
-  }
-  return true; // any other non-blank status (In, WFH, Office, a scheme name, training, etc.) = working
-}
-
 function normalize_(v) {
   return String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -736,6 +785,25 @@ function toDate_(v) {
   }
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Parses UK-style "DD/MM/YYYY" text dates, which is how the Rota tab's first
+ * week-block header row stores its dates (as plain text, not real Date
+ * cells) — the plain `new Date(v)` constructor used by toDate_ would
+ * misread "20/07/2026" as MM/DD/YYYY (or fail outright). Falls back to
+ * toDate_ for anything that isn't that exact text shape.
+ */
+function parseUkDate_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'string') {
+    const m = v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+  return toDate_(v);
 }
 
 function fmtDate_(d) {
