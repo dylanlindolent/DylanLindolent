@@ -1,35 +1,44 @@
 /**
  * AHT Capacity Planning Dashboard  —  server side (Google Apps Script)
  * ---------------------------------------------------------------------
- * Pulls live data from three Google Sheets and computes a capacity plan
- * per employee (reporter) and for the team:
+ * Rota and Backlog are two DIFFERENT activities with separate workloads
+ * (confirmed with the sheet owner — e.g. GB-VISA has both a Rota row and
+ * separately-dated Backlog cases). The dashboard therefore models them as
+ * two parallel tracks, both under the 7hr/day productivity assumption:
  *
- *   1. AHT analysis -> "AHT Validation" tab. Column A = Reconciliation key
- *      (entity+scheme, e.g. "US-VISA"), column B = Scheme, column E = "new
- *      AHT" (minutes/case). Used both for AHT and as the lookup that
- *      translates Rota's reconciliation keys into plain scheme names.
- *   2. Rota -> "Rota" tab. Scheme-first matrix: each row is one
- *      reconciliation key, and the reviewer covering it on a given weekday
- *      sits inside that day's cell (column layout is hard-coded in
- *      CONFIG.rota.matrix — see readRota_ — because this sheet's layout is
- *      too irregular for generic header-based detection).
- *   3. Backlog -> "Scheme_View" tab (a Google Sheets pivot). Real header is
- *      row 2; "Grand Total" is the open-case count per scheme. This pivot is
- *      scheme-only (no entity breakdown), so demand is computed at the plain
- *      scheme level and Rota's entity-level rows are rolled up to match.
+ *   ROTA (reconciliation / coverage)
+ *     - "Rota" tab. Scheme-first matrix: each row is one reconciliation key
+ *       (entity+scheme, e.g. "US-VISA"), and the reviewer covering it on a
+ *       given weekday sits inside that day's cell. Column layout is
+ *       hard-coded in CONFIG.rota.matrix (see readRota_) — too irregular for
+ *       generic header-based detection.
+ *     - There is no tracked day-to-day incoming volume for this activity, so
+ *       it's shown as headcount/capacity/coverage only — no demand-based
+ *       utilisation number is fabricated for it.
  *
- * Core assumption: 7 productive hours per employee per working day.
+ *   BACKLOG (clearance of aged cases)
+ *     - Staffed by "Backlog_allocation" tab (readBacklogTeamRoster_) — a
+ *       separate roster from Rota's reviewers. Currently sparse (one row);
+ *       reads whatever's there and will pick up more weeks/names as that
+ *       tab is populated.
+ *     - Demand = "Scheme_View" tab (a Google Sheets pivot; real header is
+ *       row 2, "Grand Total" = open-case count per scheme, no entity
+ *       breakdown — confirmed by the sheet's own "**refine by entity" note).
+ *     - AHT = "AHT Validation" tab, column E ("new AHT", minutes/case),
+ *       averaged across every entity row sharing a scheme. Column A
+ *       (Reconciliation) + column B (Scheme) also supply the lookup used to
+ *       translate Rota's entity-level rows into plain scheme names.
+ *     - Utilisation = demand ÷ capacity — "are they fully utilised for the 7
+ *       hours, based on the AHT?" — shown both team-wide and per person.
  *
- * AHT and Backlog columns are still detected by header name (candidate lists
- * in CONFIG) since those two tabs are simple flat tables. If a layout
- * differs, run `diagnostics()` from the editor (View > Logs) to see the
- * detected headers and adjust the candidate lists below. Rota's layout is
+ * AHT, Backlog (Scheme_View), and the Backlog roster are simple flat tables
+ * detected by header name (candidate lists in CONFIG). If a layout differs,
+ * run `diagnostics()` from the editor (View > Logs). Rota's layout is
  * hard-coded (see above) — if that sheet's structure changes, re-run
  * `probeRota()` and adjust CONFIG.rota.matrix.
  *
  * Manual allocation changes made on the dashboard are written back into the
- * ROTA spreadsheet (into an "Dashboard Allocations" tab, created on demand),
- * so the rota remains the single source of truth for allocation.
+ * ROTA spreadsheet (into a "Dashboard Allocations" tab, created on demand).
  */
 
 /* ============================ CONFIGURATION ============================ */
@@ -88,6 +97,20 @@ const CONFIG = {
       volume: ['backlog', 'volume', 'open', 'outstanding', 'wip', 'cases', 'count', 'tickets', 'items', 'total'],
       date:   ['date', 'week', 'as of', 'week commencing', 'w/c']
     }
+  },
+
+  // Who's staffing the Backlog activity — a separate roster from Rota's
+  // reviewers. Currently just one row ("Week 1" -> a comma-separated name
+  // list), so there's no date/week mapping yet: every name in the tab is
+  // treated as available for the whole filtered window. Once real per-week
+  // dates are added, wire them into readBacklogTeamRoster_ the same way
+  // Rota's dates are read.
+  backlogTeam: {
+    sheetId: '1-ywS9-yFh0rJYwX421uADNZbr3UjgAWVcxkB1kfsQJE',
+    tab: 'Backlog_allocation',
+    headerRow: 1,
+    weekCol: 0,   // column A — a week label, e.g. "Week 1" (not yet a real date)
+    namesCol: 1   // column B — comma-separated names
   }
 };
 
@@ -116,6 +139,7 @@ function getFilterOptions() {
     const aht = readAht_();
     const backlog = readBacklog_();
     const rota = readRota_();
+    const backlogTeam = readBacklogTeamRoster_();
 
     // Rota's own "scheme" values are raw entity-level reconciliation keys
     // (e.g. "US-VISA"), not plain scheme names, so they're excluded here —
@@ -124,7 +148,12 @@ function getFilterOptions() {
       aht.map(function (r) { return r.scheme; })
         .concat(backlog.map(function (r) { return r.scheme; }))
     );
-    const reporters = uniqueSorted_(rota.map(function (r) { return r.reporter; }));
+    // Both Rota reviewers and the (separate) Backlog roster, so the employee
+    // filter can select either group.
+    const reporters = uniqueSorted_(
+      rota.map(function (r) { return r.reporter; })
+        .concat(backlogTeam.names)
+    );
 
     const dates = rota
       .map(function (r) { return r.date; })
@@ -266,6 +295,17 @@ function diagnostics() {
     out.push('   sample: ' + JSON.stringify(rota[0] || {}));
   } catch (e) {
     out.push('ROTA  ERROR: ' + e);
+  }
+
+  // Backlog roster — a separate person source from Rota (see module doc
+  // comment). Currently sparse (no per-week dates), so this just reports
+  // whatever's in the tab right now.
+  try {
+    const team = readBacklogTeamRoster_();
+    out.push('BACKLOG TEAM [' + CONFIG.backlogTeam.tab + ']  weeks: ' + JSON.stringify(team.weeks) +
+      '  all names: ' + JSON.stringify(team.names));
+  } catch (e) {
+    out.push('BACKLOG TEAM  ERROR: ' + e);
   }
 
   const msg = out.join('\n');
@@ -421,6 +461,19 @@ function buildModel_(filters) {
     ? round1_(dayKeysWorked.reduce(function (s, k) { return s + Object.keys(teamDayReporters[k]).length; }, 0) / dayKeysWorked.length)
     : 0;
 
+  // Rota takes priority: a person's Rota-listed reconciliation consumes their
+  // full day. This tracks which calendar days each person is Rota-consumed
+  // on, unfiltered by the employee dropdown (a fact about the person, not
+  // about who's currently selected), so Backlog capacity below can compute
+  // each person's genuinely REMAINING time after Rota — not just assume
+  // disjoint rosters mean no overlap ever happens.
+  const rotaDaysByPerson = {};
+  rotaRows.forEach(function (r) {
+    if (!r.reporter || !r.working || !inDate(r.date)) return;
+    const dayKey = r.date ? fmtDate_(r.date) : ('row' + r.__row);
+    (rotaDaysByPerson[r.reporter] || (rotaDaysByPerson[r.reporter] = {}))[dayKey] = true;
+  });
+
   const reporters = Object.keys(perReporter).map(function (k) {
     const rep = perReporter[k];
     return {
@@ -437,10 +490,20 @@ function buildModel_(filters) {
 
   const teamCapacityMinutes = reporters.reduce(function (s, r) { return s + r.capacityMinutes; }, 0);
 
+  // Rota is priority — the Backlog demand list is scoped to whatever
+  // reconciliation is actually active on Rota for the current view (the
+  // union of every currently-filtered Rota reviewer's own scheme list).
+  // Falls back to showing every scheme if Rota has no data for this
+  // window/filter, rather than silently zeroing the whole dashboard.
+  const rotaActiveSchemes = {};
+  reporters.forEach(function (rep) { (rep.schemes || []).forEach(function (s) { rotaActiveSchemes[s] = true; }); });
+  const hasRotaActiveSchemes = Object.keys(rotaActiveSchemes).length > 0;
+
   // ---- Demand per scheme (minutes) & scheme table ----------------------
   const schemeNames = uniqueSorted_(
     Object.keys(backlogByScheme).concat(Object.keys(ahtByScheme))
-  ).filter(function (s) { return !schemeFilter || schemeFilter.has(s); });
+  ).filter(function (s) { return !schemeFilter || schemeFilter.has(s); })
+   .filter(function (s) { return !hasRotaActiveSchemes || rotaActiveSchemes[s]; });
 
   const schemes = schemeNames.map(function (name) {
     const cases = backlogByScheme[name] || 0;
@@ -459,55 +522,102 @@ function buildModel_(filters) {
   const totalDemandMinutes = schemes.reduce(function (s, x) { return s + x.demandMinutes; }, 0);
   const totalBacklogCases = schemes.reduce(function (s, x) { return s + x.backlogCases; }, 0);
 
-  // ---- Recommended allocation ------------------------------------------
-  // See recommendAllocation_ — each reporter's own capacity is split only
-  // across the schemes they're actually rostered for (proportional), or
-  // schemes are filled from their rostered reporters biggest-backlog-first
-  // (greedy). Never assigns work outside a reporter's real scheme coverage.
-  const recommendations = recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides, filters);
+  // ---- ROTA track: coverage only, no demand data available ---------------
+  // No day-to-day incoming-volume source exists for reconciliation work, so
+  // Rota is reported as headcount/capacity/coverage — not a demand-driven
+  // utilisation (that would just be fabricated).
+  const rotaKpis = {
+    teamCapacityHours: round1_(teamCapacityMinutes / CONFIG.minutesPerHour),
+    teamSize: reporters.length,
+    headcount: avgDailyHeadcount, // available headcount for the day (avg/day across the window)
+    workingDays: teamWorkingSlots
+  };
 
-  // ---- Per-employee utilisation ------------------------------------------
-  // Required minutes = the AHT-driven work their own recommendations add up
-  // to (i.e. backlog cases they're assigned x new AHT), against their 7hr/day
-  // capacity — "are they fully utilised for the 7 hours, based on the AHT?"
-  const requiredMinutesByReporter = {};
-  recommendations.forEach(function (r) {
-    requiredMinutesByReporter[r.reporter] = (requiredMinutesByReporter[r.reporter] || 0) + r.recommendedHours * CONFIG.minutesPerHour;
+  // ---- BACKLOG track: Rota's leftover capacity, driven by Scheme_View demand
+  // Rota is priority: a person's Rota-listed reconciliation consumes their
+  // full day, so Backlog capacity is only the genuinely REMAINING time —
+  // days in the window they were NOT Rota-consumed on. With the current
+  // (disjoint) rosters this equals every day for everyone in
+  // Backlog_allocation, but the calculation is per-person so it stays
+  // correct if the same person ever appears in both lists.
+  const backlogRoster = readBacklogTeamRoster_();
+  const backlogNames = reporterFilter
+    ? backlogRoster.names.filter(function (n) { return n === reporterFilter; })
+    : backlogRoster.names;
+  const backlogSchemeNames = schemes.map(function (sc) { return sc.scheme; });
+  const backlogRepInputs = backlogNames.map(function (name) {
+    const consumedDays = rotaDaysByPerson[name] || {};
+    const remainingDayKeys = dayKeysWorked.filter(function (dayKey) { return !consumedDays[dayKey]; });
+    const remainingMinutes = remainingDayKeys.length * dayMinutes;
+    return {
+      reporter: name,
+      days: remainingDayKeys.length,
+      capacityHours: round1_(remainingMinutes / CONFIG.minutesPerHour),
+      capacityMinutes: remainingMinutes,
+      // No per-person scheme roster exists for Backlog yet, so everyone is
+      // eligible for every scheme currently in view (unlike Rota, which
+      // restricts to each reviewer's real assignments).
+      schemes: backlogSchemeNames
+    };
   });
-  reporters.forEach(function (rep) {
-    const requiredMinutes = requiredMinutesByReporter[rep.reporter] || 0;
-    rep.requiredHours = round1_(requiredMinutes / CONFIG.minutesPerHour);
-    rep.utilisationPct = rep.capacityMinutes > 0 ? round1_((requiredMinutes / rep.capacityMinutes) * 100) : 0;
+  const backlogTeamCapacityMinutes = backlogRepInputs.reduce(function (s, r) { return s + r.capacityMinutes; }, 0);
+
+  // Same allocation engine as before (proportional/greedy), just applied to
+  // the Backlog roster instead of Rota's reviewers.
+  const backlogRecommendations = recommendAllocation_(schemes, backlogRepInputs, backlogTeamCapacityMinutes, overrides, filters);
+
+  // Per-person utilisation: "based on the AHT, are they fully utilised for
+  // the 7 hours or not?" — required minutes = their own recommended
+  // allocation (backlog cases assigned x new AHT), against 7hr/day capacity.
+  const backlogRequiredMinutesByPerson = {};
+  backlogRecommendations.forEach(function (r) {
+    backlogRequiredMinutesByPerson[r.reporter] = (backlogRequiredMinutesByPerson[r.reporter] || 0) + r.recommendedHours * CONFIG.minutesPerHour;
+  });
+  const backlogReporters = backlogRepInputs.map(function (rep) {
+    const requiredMinutes = backlogRequiredMinutesByPerson[rep.reporter] || 0;
+    return {
+      reporter: rep.reporter,
+      days: rep.days,
+      capacityHours: rep.capacityHours,
+      capacityMinutes: rep.capacityMinutes,
+      requiredHours: round1_(requiredMinutes / CONFIG.minutesPerHour),
+      utilisationPct: rep.capacityMinutes > 0 ? round1_((requiredMinutes / rep.capacityMinutes) * 100) : 0
+    };
   });
 
-  // ---- KPIs -------------------------------------------------------------
-  // Utilisation = how much of the team's 7hr/day capacity the AHT-based
-  // demand (backlog cases x new AHT) consumes.
-  const utilisation = teamCapacityMinutes > 0
-    ? round1_((totalDemandMinutes / teamCapacityMinutes) * 100) : 0;
-  const surplusMinutes = teamCapacityMinutes - totalDemandMinutes;
-  const daysToClear = (avgDailyHeadcount > 0)
-    ? round1_(totalDemandMinutes / dayMinutes / avgDailyHeadcount) : 0;
+  const backlogUtilisation = backlogTeamCapacityMinutes > 0
+    ? round1_((totalDemandMinutes / backlogTeamCapacityMinutes) * 100) : 0;
+  const backlogSurplusMinutes = backlogTeamCapacityMinutes - totalDemandMinutes;
+  const backlogDaysToClear = backlogNames.length > 0
+    ? round1_(totalDemandMinutes / dayMinutes / backlogNames.length) : 0;
+
+  const backlogKpis = {
+    teamCapacityHours: round1_(backlogTeamCapacityMinutes / CONFIG.minutesPerHour),
+    teamSize: backlogNames.length,
+    demandHours: round1_(totalDemandMinutes / CONFIG.minutesPerHour),
+    utilisation: backlogUtilisation,
+    backlogCases: totalBacklogCases,
+    workingDays: dayKeysWorked.length,
+    surplusHours: round1_(backlogSurplusMinutes / CONFIG.minutesPerHour),
+    daysToClear: backlogDaysToClear
+  };
 
   return {
     assumptions: {
       productivityHoursPerDay: CONFIG.productivityHoursPerDay,
       dayMinutes: dayMinutes
     },
-    kpis: {
-      teamCapacityHours: round1_(teamCapacityMinutes / CONFIG.minutesPerHour),
-      teamSize: reporters.length, // distinct people rostered anywhere in the filtered window
-      demandHours: round1_(totalDemandMinutes / CONFIG.minutesPerHour),
-      utilisation: utilisation,
-      backlogCases: totalBacklogCases,
-      headcount: avgDailyHeadcount, // available headcount for the day (avg/day across the window)
-      workingDays: teamWorkingSlots,
-      surplusHours: round1_(surplusMinutes / CONFIG.minutesPerHour),
-      daysToClear: daysToClear
-    },
     schemes: schemes,
-    reporters: reporters,
-    recommendations: recommendations,
+    rota: {
+      kpis: rotaKpis,
+      reporters: reporters
+    },
+    backlog: {
+      kpis: backlogKpis,
+      reporters: backlogReporters,
+      recommendations: backlogRecommendations,
+      weeksNote: backlogRoster.weeks.map(function (w) { return w.label; }).filter(Boolean).join(', ')
+    },
     overridesCount: overrides.length
   };
 }
@@ -626,7 +736,13 @@ function greedyAllocation_(schemes, reporters, overrides) {
   return recs;
 }
 
-/** Surfaces manual overrides for (reporter, scheme) pairs the strategy didn't otherwise place. */
+/**
+ * Surfaces manual overrides for (reporter, scheme) pairs the strategy didn't
+ * otherwise place. Skips overrides whose reporter isn't in this specific
+ * `reporters` array — Rota and Backlog allocations are computed from the
+ * same shared overrides list but call this separately, so an override
+ * belonging to the other activity's reporter must not leak in here.
+ */
 function appendUnplacedOverrides_(recs, ovMap, reporters, emitted) {
   const seen = emitted || {};
   if (!emitted) recs.forEach(function (r) { seen[r.reporter + '||' + r.scheme] = true; });
@@ -634,11 +750,12 @@ function appendUnplacedOverrides_(recs, ovMap, reporters, emitted) {
     if (seen[key]) return;
     const parts = key.split('||');
     const rep = reporters.filter(function (r) { return r.reporter === parts[0]; })[0];
+    if (!rep) return;
     recs.push({
       reporter: parts[0], scheme: parts[1],
       recommendedCases: 0, recommendedHours: 0,
       allocatedCases: ovMap[key], overridden: true,
-      capacityHours: rep ? rep.capacityHours : 0
+      capacityHours: rep.capacityHours
     });
   });
 }
@@ -727,6 +844,34 @@ function readRota_() {
     });
   }
   return out;
+}
+
+/**
+ * Backlog roster reader — a separate person source from Rota's reviewers.
+ * Each row is a week label ("Week 1") plus a comma-separated name list, e.g.
+ * ["Week 1", "Nooreena, Kelina, Amit"]. No date/week mapping exists yet, so
+ * every name across every row is returned flat — see CONFIG.backlogTeam.
+ */
+function readBacklogTeamRoster_() {
+  const cfg = CONFIG.backlogTeam;
+  const ss = SpreadsheetApp.openById(cfg.sheetId);
+  const sheet = ss.getSheetByName(cfg.tab);
+  if (!sheet) throw new Error('Tab "' + cfg.tab + '" not found in ' + cfg.sheetId);
+  const values = sheet.getDataRange().getValues();
+  const weeks = [];
+  const seen = {};
+  const names = [];
+  for (let i = cfg.headerRow; i < values.length; i++) {
+    const label = cleanStr_(values[i][cfg.weekCol]);
+    const cell = cleanStr_(values[i][cfg.namesCol]);
+    if (!cell) continue;
+    const rowNames = cell.split(',').map(function (n) { return cleanStr_(n); }).filter(Boolean);
+    rowNames.forEach(function (n) {
+      if (!seen[n.toLowerCase()]) { seen[n.toLowerCase()] = true; names.push(n); }
+    });
+    weeks.push({ label: label, names: rowNames });
+  }
+  return { weeks: weeks, names: names };
 }
 
 function readAllocations_() {

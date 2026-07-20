@@ -85,6 +85,15 @@
     .presets { display: flex; gap: 6px; }
     .presets button { padding: 6px 10px; font-size: 12px; font-weight: 550; }
 
+    /* ---- Section labels (Rota vs. Backlog activity split) ------------- */
+    .section-label {
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+      color: var(--text-secondary); margin: 22px 2px 10px; display: flex; align-items: center; gap: 8px;
+    }
+    .section-label:first-of-type { margin-top: 0; }
+    .section-label .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); }
+    .section-label .note { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 11.5px; }
+
     /* ---- KPI tiles ---------------------------------------------------- */
     .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 18px; }
     .tile {
@@ -232,28 +241,39 @@
     <div class="loading-overlay" id="loading"><span class="spinner"></span> Loading live data…</div>
 
     <div id="dashboard" style="display:none">
-      <!-- KPI tiles -->
-      <div class="kpis" id="kpis"></div>
+      <!-- ROTA — reconciliation coverage (no separate demand data available) -->
+      <div class="section-label"><span class="dot"></span>Rota — reconciliation coverage, takes priority <span class="note">who's rostered each day; their full day counts as consumed by Rota — no day-to-day volume data exists, so no utilisation is shown here</span></div>
+      <div class="kpis" id="kpisRota"></div>
+
+      <div class="card">
+        <h2>Capacity per Rota reviewer</h2>
+        <p class="desc">Working days in range × 7 hrs, and the schemes each reviewer is rostered for. Rota takes priority — a rostered day counts as fully used here, not available for Backlog.</p>
+        <div class="bars single" id="rotaBars"></div>
+      </div>
+
+      <!-- BACKLOG — clearance work, driven by Scheme_View demand -->
+      <div class="section-label"><span class="dot"></span>Backlog — clearance, from Rota's remaining capacity <span class="note" id="backlogRosterNote"></span></div>
+      <div class="kpis" id="kpisBacklog"></div>
 
       <div class="grid2">
         <!-- Demand vs capacity by scheme -->
         <div class="card">
           <h2>Demand vs. capacity by scheme</h2>
-          <p class="desc">Backlog work required (backlog × new AHT) against available team capacity, in hours.</p>
+          <p class="desc">Backlog work required (backlog × new AHT) against the Backlog team's remaining capacity, in hours. Scoped to schemes currently active on Rota — a scheme with no Rota coverage today is out of scope here even if it has open backlog.</p>
           <div class="legend">
             <div class="item"><span class="swatch" style="background:var(--s6)"></span>Demand (required hrs)</div>
-            <div class="item"><span class="swatch" style="background:var(--s1)"></span>Team capacity share (hrs)</div>
+            <div class="item"><span class="swatch" style="background:var(--s1)"></span>Backlog capacity share (hrs)</div>
           </div>
           <div class="bars" id="schemeBars"></div>
         </div>
 
         <!-- Per-employee capacity -->
         <div class="card">
-          <h2>Capacity per employee</h2>
-          <p class="desc">Required hours (AHT-based, solid) against 7hr/day capacity (faded). % shows utilisation — are they fully occupied for their 7 hours?</p>
+          <h2>Capacity per Backlog employee</h2>
+          <p class="desc">Required hours (AHT-based, solid) against remaining capacity after Rota (faded, up to 7hr/day). % shows utilisation — are they fully occupied for their 7 hours?</p>
           <div class="legend">
             <div class="item"><span class="swatch" style="background:var(--muted)"></span>Required (AHT-based) — each person's own colour</div>
-            <div class="item"><span class="swatch" style="background:var(--muted);opacity:.35"></span>7hr/day capacity — same colour, faded</div>
+            <div class="item"><span class="swatch" style="background:var(--muted);opacity:.35"></span>Remaining capacity after Rota — same colour, faded</div>
           </div>
           <div class="bars" id="repBars"></div>
         </div>
@@ -261,8 +281,8 @@
 
       <!-- Planned allocation, stacked by scheme -->
       <div class="card">
-        <h2>Planned allocation by employee</h2>
-        <p class="desc">Recommended hours per employee, stacked by scheme — shows how each person's day is planned across queues.</p>
+        <h2>Planned Backlog allocation by employee</h2>
+        <p class="desc">Recommended hours per Backlog employee, stacked by scheme — shows how each person's day is planned across queues.</p>
         <div class="legend" id="stackedLegend"></div>
         <div class="bars single" id="stackedBars"></div>
       </div>
@@ -271,8 +291,8 @@
       <div class="card">
         <div class="toolbar">
           <div>
-            <h2 style="margin:0">Recommended allocation</h2>
-            <p class="desc" style="margin:2px 0 0">Demand-weighted split across rostered employees. Edit “Allocated” to override — saving writes back to the Rota sheet.</p>
+            <h2 style="margin:0">Recommended Backlog allocation</h2>
+            <p class="desc" style="margin:2px 0 0">Demand-weighted split across the Backlog roster. Edit "Allocated" to override — saving writes back to the Rota sheet's Dashboard Allocations tab.</p>
           </div>
           <div class="spacer"></div>
           <span id="saveState" class="muted"></span>
@@ -310,7 +330,6 @@
       dateRange: { min: '2026-07-13', max: '2026-07-20' } };
     var MOCK_DATA = { ok: true, generatedAt: '2026-07-20 09:12', data: {
       assumptions: { productivityHoursPerDay: 7, dayMinutes: 420 },
-      kpis: { teamCapacityHours: 245, teamSize: 7, demandHours: 288.5, utilisation: 117.8, backlogCases: 1842, headcount: 6.8, workingDays: 35, surplusHours: -43.5, daysToClear: 9.8 },
       schemes: [
         { scheme:'Chargeback', backlogCases:520, ahtMinutes:14.5, ahtEstimated:false, demandHours:125.7, demandMinutes:7540 },
         { scheme:'Fraud', backlogCases:410, ahtMinutes:9.0, ahtEstimated:false, demandHours:61.5, demandMinutes:3690 },
@@ -320,25 +339,35 @@
         { scheme:'Pre-arbitration', backlogCases:82, ahtMinutes:5.0, ahtEstimated:true, demandHours:6.8, demandMinutes:410 },
         { scheme:'Amex', backlogCases:40, ahtMinutes:6.8, ahtEstimated:false, demandHours:4.5, demandMinutes:272 }
       ],
-      reporters: [
-        { reporter:'Amelia Chen', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback', requiredHours:14.9, utilisationPct:42.6 },
-        { reporter:'Ben Okafor', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Fraud', requiredHours:11.1, utilisationPct:31.7 },
-        { reporter:'Carla Diaz', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Visa', requiredHours:8.6, utilisationPct:24.6 },
-        { reporter:'Dmitri Volkov', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Retrieval', requiredHours:10.4, utilisationPct:29.7 },
-        { reporter:'Elena Rossi', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback', requiredHours:14.9, utilisationPct:42.6 },
-        { reporter:'Farid Khan', days:4, capacityHours:28, capacityMinutes:1680, currentScheme:'Mastercard', requiredHours:6.1, utilisationPct:21.8 },
-        { reporter:'Grace Lin', days:6, capacityHours:42, capacityMinutes:2520, currentScheme:'Fraud', requiredHours:48.0, utilisationPct:114.3 }
-      ],
-      recommendations: [
-        { reporter:'Grace Lin', scheme:'Chargeback', recommendedCases:74, recommendedHours:17.9, allocatedCases:74, overridden:false, capacityHours:42 },
-        { reporter:'Amelia Chen', scheme:'Chargeback', recommendedCases:62, recommendedHours:14.9, allocatedCases:80, overridden:true, capacityHours:35 },
-        { reporter:'Elena Rossi', scheme:'Chargeback', recommendedCases:62, recommendedHours:14.9, allocatedCases:62, overridden:false, capacityHours:35 },
-        { reporter:'Ben Okafor', scheme:'Fraud', recommendedCases:74, recommendedHours:11.1, allocatedCases:74, overridden:false, capacityHours:35 },
-        { reporter:'Grace Lin', scheme:'Fraud', recommendedCases:60, recommendedHours:9.0, allocatedCases:60, overridden:false, capacityHours:42 },
-        { reporter:'Dmitri Volkov', scheme:'Retrieval', recommendedCases:96, recommendedHours:10.4, allocatedCases:96, overridden:false, capacityHours:35 },
-        { reporter:'Carla Diaz', scheme:'Visa', recommendedCases:71, recommendedHours:8.6, allocatedCases:71, overridden:false, capacityHours:35 },
-        { reporter:'Farid Khan', scheme:'Mastercard', recommendedCases:52, recommendedHours:6.1, allocatedCases:52, overridden:false, capacityHours:28 }
-      ],
+      rota: {
+        kpis: { teamCapacityHours: 245, teamSize: 6, headcount: 5.4, workingDays: 30 },
+        reporters: [
+          { reporter:'SHABNEEZ', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Visa', schemes:['Visa','Mastercard'] },
+          { reporter:'KHELLY', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Mastercard', schemes:['Mastercard','Amex'] },
+          { reporter:'SANIL', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Visa', schemes:['Visa'] },
+          { reporter:'DARSHEENEE', days:5, capacityHours:35, capacityMinutes:2100, currentScheme:'Chargeback', schemes:['Chargeback','Amex'] },
+          { reporter:'ANAS', days:4, capacityHours:28, capacityMinutes:1680, currentScheme:'Mastercard', schemes:['Mastercard'] },
+          { reporter:'BILAAL', days:6, capacityHours:42, capacityMinutes:2520, currentScheme:'Retrieval', schemes:['Retrieval','Fraud'] }
+        ]
+      },
+      backlog: {
+        kpis: { teamCapacityHours: 105, teamSize: 3, demandHours: 288.5, utilisation: 274.8, backlogCases: 1842, workingDays: 5, surplusHours: -183.5, daysToClear: 13.7 },
+        weeksNote: 'Week 1',
+        reporters: [
+          { reporter:'Nooreena', days:5, capacityHours:35, capacityMinutes:2100, requiredHours:35, utilisationPct:100 },
+          { reporter:'Kelina', days:5, capacityHours:35, capacityMinutes:2100, requiredHours:35, utilisationPct:100 },
+          { reporter:'Amit', days:5, capacityHours:35, capacityMinutes:2100, requiredHours:35, utilisationPct:100 }
+        ],
+        recommendations: [
+          { reporter:'Nooreena', scheme:'Chargeback', recommendedCases:31, recommendedHours:15.3, allocatedCases:40, overridden:true, capacityHours:35 },
+          { reporter:'Nooreena', scheme:'Fraud', recommendedCases:31, recommendedHours:7.4, allocatedCases:31, overridden:false, capacityHours:35 },
+          { reporter:'Nooreena', scheme:'Retrieval', recommendedCases:31, recommendedHours:4.7, allocatedCases:31, overridden:false, capacityHours:35 },
+          { reporter:'Kelina', scheme:'Chargeback', recommendedCases:32, recommendedHours:15.3, allocatedCases:32, overridden:false, capacityHours:35 },
+          { reporter:'Kelina', scheme:'Fraud', recommendedCases:32, recommendedHours:7.4, allocatedCases:32, overridden:false, capacityHours:35 },
+          { reporter:'Amit', scheme:'Chargeback', recommendedCases:31, recommendedHours:15.3, allocatedCases:31, overridden:false, capacityHours:35 },
+          { reporter:'Amit', scheme:'Visa', recommendedCases:44, recommendedHours:8.4, allocatedCases:44, overridden:false, capacityHours:35 }
+        ]
+      },
       overridesCount: 1
     }};
     window.google = { script: { run: (function(){
@@ -396,7 +425,7 @@
         .getFilterOptions();
 
       $('apply').onclick = load;
-      $('resetAlloc').onclick = function () { EDITS = {}; renderRecs(LAST.recommendations); updateSaveState(); };
+      $('resetAlloc').onclick = function () { EDITS = {}; renderRecs(LAST.backlog.recommendations); updateSaveState(); };
       $('saveAlloc').onclick = saveEdits;
 
       var presetBtns = document.querySelectorAll('.presets button');
@@ -465,34 +494,72 @@
       LAST = res.data;
       $('stamp').textContent = 'Updated ' + res.generatedAt;
       $('dashboard').style.display = 'block';
-      renderKpis(LAST.kpis);
-      renderSchemeBars(LAST.schemes, LAST.kpis);
-      renderRepBars(LAST.reporters);
-      renderStacked(LAST.recommendations, LAST.schemes);
-      renderRecs(LAST.recommendations);
+      renderRotaKpis(LAST.rota.kpis);
+      renderRotaBars(LAST.rota.reporters);
+      renderBacklogKpis(LAST.backlog.kpis);
+      renderSchemeBars(LAST.schemes, LAST.backlog.kpis);
+      renderRepBars(LAST.backlog.reporters);
+      renderStacked(LAST.backlog.recommendations, LAST.schemes);
+      renderRecs(LAST.backlog.recommendations);
       updateSaveState();
+      $('backlogRosterNote').textContent = LAST.backlog.weeksNote
+        ? '· roster: ' + LAST.backlog.weeksNote + ' (Backlog_allocation — no per-week dates yet, so shown for the full window)'
+        : '· no Backlog_allocation roster data found';
       var a = LAST.assumptions;
       $('footnote').textContent = 'Assumption: ' + a.productivityHoursPerDay + ' productive hrs/day (' +
-        a.dayMinutes + ' min). AHT source: AHT Validation!E. ' +
+        a.dayMinutes + ' min). AHT source: AHT Validation!E. Rota takes priority — a rostered day is fully consumed by ' +
+        'reconciliation; only genuinely remaining time counts toward Backlog capacity, and Backlog demand is scoped to ' +
+        'schemes currently active on Rota. ' +
         (LAST.overridesCount ? (LAST.overridesCount + ' manual override(s) applied from Rota.') : '');
     }
 
     // ---- KPIs ----
-    function renderKpis(k) {
+    function renderKpiTiles(containerId, tiles) {
+      $(containerId).innerHTML = tiles.map(function (t) {
+        return '<div class="tile"><div class="k">' + t.k + '</div><div class="v">' + t.v + '</div><div class="u">' + t.u + '</div></div>';
+      }).join('');
+    }
+
+    function renderRotaKpis(k) {
+      renderKpiTiles('kpisRota', [
+        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours across ' + fmt(k.teamSize) + ' people' },
+        { k: 'Head-count', v: fmt(k.headcount), u: 'available per day, avg.' },
+        { k: 'Working days', v: fmt(k.workingDays), u: 'rostered slots in range' }
+      ]);
+    }
+
+    function renderBacklogKpis(k) {
       var util = k.utilisation;
       var utilClass = util > 100 ? 'bad' : (util > 85 ? 'warn' : 'good');
       var surplusClass = k.surplusHours < 0 ? 'bad' : 'good';
-      var tiles = [
+      renderKpiTiles('kpisBacklog', [
         { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours across ' + fmt(k.teamSize) + ' people' },
         { k: 'Demand (backlog)', v: fmt(k.demandHours), u: fmt(k.backlogCases) + ' cases' },
         { k: 'Utilisation', v: fmt(util) + '<small>%</small>', u: '<span class="pill ' + utilClass + '">' + (util > 100 ? 'Over capacity' : 'Within capacity') + '</span>' },
-        { k: 'Head-count', v: fmt(k.headcount), u: 'available per day, avg.' },
         { k: 'Surplus / deficit', v: (k.surplusHours >= 0 ? '+' : '') + fmt(k.surplusHours), u: '<span class="pill ' + surplusClass + '">' + (k.surplusHours >= 0 ? 'spare hrs' : 'short hrs') + '</span>' },
-        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current daily head-count' }
-      ];
-      $('kpis').innerHTML = tiles.map(function (t) {
-        return '<div class="tile"><div class="k">' + t.k + '</div><div class="v">' + t.v + '</div><div class="u">' + t.u + '</div></div>';
+        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current head-count' }
+      ]);
+    }
+
+    // ---- Rota bars (coverage only — capacity + which schemes, no demand) ----
+    function renderRotaBars(reps) {
+      if (!reps.length) { $('rotaBars').innerHTML = '<p class="muted">No rostered Rota reviewers for this selection.</p>'; return; }
+      var max = reps.reduce(function (m, r) { return Math.max(m, r.capacityHours); }, 0) || 1;
+      $('rotaBars').innerHTML = reps.map(function (r, i) {
+        var w = r.capacityHours / max * 100;
+        var color = 'var(' + SERIES[i % SERIES.length] + ')';
+        var schemeList = (r.schemes || []).join(', ');
+        return '<div class="bar-row">' +
+          '<div class="name" title="' + esc(r.reporter) + '">' + esc(r.reporter) + '</div>' +
+          '<div class="track" data-tip="<b>' + esc(r.reporter) + '</b><br>' + r.days + ' working days' +
+            '<br>Capacity: ' + fmt(r.capacityHours) + ' hrs' +
+            (schemeList ? '<br>Schemes: ' + esc(schemeList) : '') + '">' +
+            '<div class="seg" style="width:' + w + '%;background:' + color + ';top:0;height:100%"></div>' +
+          '</div>' +
+          '<div class="val">' + fmt(r.capacityHours) + 'h</div>' +
+        '</div>';
       }).join('');
+      bindTips('rotaBars');
     }
 
     // ---- Scheme bars (demand vs capacity share) ----
@@ -657,7 +724,7 @@
     function saveEdits() {
       var payload = [];
       var byKey = {};
-      LAST.recommendations.forEach(function (r) { byKey[keyOf(r)] = r; });
+      LAST.backlog.recommendations.forEach(function (r) { byKey[keyOf(r)] = r; });
       Object.keys(EDITS).forEach(function (k) {
         var r = byKey[k]; if (!r) return;
         payload.push({
