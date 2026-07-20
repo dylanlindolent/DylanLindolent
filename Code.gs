@@ -466,6 +466,20 @@ function buildModel_(filters) {
   // (greedy). Never assigns work outside a reporter's real scheme coverage.
   const recommendations = recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides, filters);
 
+  // ---- Per-employee utilisation ------------------------------------------
+  // Required minutes = the AHT-driven work their own recommendations add up
+  // to (i.e. backlog cases they're assigned x new AHT), against their 7hr/day
+  // capacity — "are they fully utilised for the 7 hours, based on the AHT?"
+  const requiredMinutesByReporter = {};
+  recommendations.forEach(function (r) {
+    requiredMinutesByReporter[r.reporter] = (requiredMinutesByReporter[r.reporter] || 0) + r.recommendedHours * CONFIG.minutesPerHour;
+  });
+  reporters.forEach(function (rep) {
+    const requiredMinutes = requiredMinutesByReporter[rep.reporter] || 0;
+    rep.requiredHours = round1_(requiredMinutes / CONFIG.minutesPerHour);
+    rep.utilisationPct = rep.capacityMinutes > 0 ? round1_((requiredMinutes / rep.capacityMinutes) * 100) : 0;
+  });
+
   // ---- KPIs -------------------------------------------------------------
   // Utilisation = how much of the team's 7hr/day capacity the AHT-based
   // demand (backlog cases x new AHT) consumes.
