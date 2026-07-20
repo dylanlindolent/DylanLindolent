@@ -131,6 +131,12 @@
     .single .seg { border-radius: 0 4px 4px 0; }
     .single .track { height: 22px; }
 
+    /* stacked bar */
+    .stack-track { position: absolute; top: 0; left: 0; height: 100%; display: flex; gap: 2px; }
+    .stack-seg { height: 100%; min-width: 2px; border-radius: 3px; }
+    .stack-seg:first-child { border-radius: 4px 3px 3px 4px; }
+    .stack-seg:last-child { border-radius: 3px 4px 4px 3px; }
+
     /* ---- Table -------------------------------------------------------- */
     .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
     .toolbar .spacer { flex: 1; }
@@ -206,6 +212,13 @@
         <label for="reporter">Reporter (employee)</label>
         <select id="reporter"><option value="">All employees</option></select>
       </div>
+      <div class="field">
+        <label for="strategy">Allocation strategy</label>
+        <select id="strategy">
+          <option value="proportional">Proportional (demand-weighted)</option>
+          <option value="greedy">Greedy (biggest backlog first)</option>
+        </select>
+      </div>
       <div class="field grow">
         <label for="schemes">Scheme <span class="muted">(ctrl/cmd-click for multiple)</span></label>
         <select id="schemes" multiple></select>
@@ -240,6 +253,14 @@
           <p class="desc">Working days in range × 7 hrs. Filtered to the selected employee when set.</p>
           <div class="bars single" id="repBars"></div>
         </div>
+      </div>
+
+      <!-- Planned allocation, stacked by scheme -->
+      <div class="card">
+        <h2>Planned allocation by employee</h2>
+        <p class="desc">Recommended hours per employee, stacked by scheme — shows how each person's day is planned across queues.</p>
+        <div class="legend" id="stackedLegend"></div>
+        <div class="bars single" id="stackedBars"></div>
       </div>
 
       <!-- Recommendations table -->
@@ -353,7 +374,8 @@
         dateFrom: $('dateFrom').value || '',
         dateTo: $('dateTo').value || '',
         reporter: $('reporter').value || '',
-        schemes: schemes
+        schemes: schemes,
+        strategy: $('strategy').value || 'proportional'
       };
     }
 
@@ -381,6 +403,7 @@
       renderKpis(LAST.kpis);
       renderSchemeBars(LAST.schemes, LAST.kpis);
       renderRepBars(LAST.reporters);
+      renderStacked(LAST.recommendations, LAST.schemes);
       renderRecs(LAST.recommendations);
       updateSaveState();
       var a = LAST.assumptions;
@@ -460,8 +483,60 @@
       bindTips('repBars');
     }
 
+    // ---- Consistent scheme -> colour map (folds >8 schemes into "Other") ----
+    function schemeColorMap(schemes) {
+      var map = {}, legend = [];
+      schemes.forEach(function (s, i) {
+        if (i < SERIES.length) {
+          var c = 'var(' + SERIES[i] + ')';
+          map[s.scheme] = c;
+          legend.push({ label: s.scheme, color: c });
+        } else {
+          map[s.scheme] = 'var(--muted)';
+        }
+      });
+      if (schemes.length > SERIES.length) legend.push({ label: 'Other', color: 'var(--muted)' });
+      return { map: map, legend: legend };
+    }
+
+    // ---- Stacked allocation by employee ----
+    function renderStacked(recs, schemes) {
+      var cmap = schemeColorMap(schemes);
+      $('stackedLegend').innerHTML = cmap.legend.map(function (l) {
+        return '<div class="item"><span class="swatch" style="background:' + l.color + '"></span>' + esc(l.label) + '</div>';
+      }).join('');
+
+      var byRep = {};
+      recs.forEach(function (r) {
+        if (r.recommendedHours <= 0) return;
+        var g = byRep[r.reporter] || (byRep[r.reporter] = { reporter: r.reporter, schemes: [], total: 0 });
+        g.schemes.push({ scheme: r.scheme, hours: r.recommendedHours });
+        g.total += r.recommendedHours;
+      });
+      var reps = Object.keys(byRep).map(function (k) { return byRep[k]; })
+        .sort(function (a, b) { return b.total - a.total; });
+
+      if (!reps.length) { $('stackedBars').innerHTML = '<p class="muted">No allocation for this selection.</p>'; return; }
+      var max = reps.reduce(function (m, r) { return Math.max(m, r.total); }, 0) || 1;
+
+      $('stackedBars').innerHTML = reps.map(function (r) {
+        var segs = r.schemes.sort(function (a, b) { return b.hours - a.hours; }).map(function (s) {
+          var w = (s.hours / r.total * 100);
+          return '<div class="stack-seg" style="width:' + w + '%;background:' + (cmap.map[s.scheme] || 'var(--muted)') +
+            '" data-tip="<b>' + esc(r.reporter) + '</b><br>' + esc(s.scheme) + ': ' + fmt(s.hours) + ' hrs"></div>';
+        }).join('');
+        var trackW = (r.total / max * 100);
+        return '<div class="bar-row">' +
+          '<div class="name" title="' + esc(r.reporter) + '">' + esc(r.reporter) + '</div>' +
+          '<div class="track"><div class="stack-track" style="width:' + trackW + '%">' + segs + '</div></div>' +
+          '<div class="val">' + fmt(r.total) + 'h</div>' +
+        '</div>';
+      }).join('');
+      bindTips('stackedBars');
+    }
+
     function bindTips(containerId) {
-      var tracks = $(containerId).querySelectorAll('.track[data-tip]');
+      var tracks = $(containerId).querySelectorAll('[data-tip]');
       for (var i = 0; i < tracks.length; i++) {
         (function (el) {
           el.addEventListener('mousemove', function (e) { showTip(el.getAttribute('data-tip'), e); });

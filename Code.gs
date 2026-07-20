@@ -343,9 +343,20 @@ function buildModel_(filters) {
 }
 
 /**
- * Proportional demand-weighted allocation with manual-override support.
+ * Recommended allocation. Two strategies (chosen via filters.strategy):
+ *   'proportional' (default) — demand-weighted split across all employees.
+ *   'greedy'                 — clear the biggest backlog first, filling one
+ *                              scheme from the capacity pool before the next.
  */
 function recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides, filters) {
+  const strategy = (filters && filters.strategy) || 'proportional';
+  if (!reporters.length) return [];
+  return strategy === 'greedy'
+    ? greedyAllocation_(schemes, reporters, overrides)
+    : proportionalAllocation_(schemes, reporters, teamCapacityMinutes, overrides);
+}
+
+function proportionalAllocation_(schemes, reporters, teamCapacityMinutes, overrides) {
   const recs = [];
   if (!reporters.length) return recs;
 
@@ -389,6 +400,67 @@ function recommendAllocation_(schemes, reporters, teamCapacityMinutes, overrides
 
   // Keep only the meaningful lines (reporter's top schemes) to avoid noise:
   // sort by recommended hours desc.
+  recs.sort(function (a, b) { return b.recommendedHours - a.recommendedHours; });
+  return recs;
+}
+
+/**
+ * Greedy allocation — walk schemes from largest backlog to smallest and fill
+ * each one from the team's remaining capacity (biggest-capacity employees
+ * first) before moving on. Produces focused assignments (fewer schemes per
+ * person) rather than spreading everyone thinly across every scheme.
+ */
+function greedyAllocation_(schemes, reporters, overrides) {
+  const recs = [];
+  const ovMap = {};
+  overrides.forEach(function (o) { ovMap[o.reporter + '||' + o.scheme] = o.cases; });
+
+  // remaining capacity (minutes) per reporter; biggest capacity used first
+  const pool = reporters.slice().sort(function (a, b) { return b.capacityMinutes - a.capacityMinutes; });
+  const remaining = {};
+  pool.forEach(function (r) { remaining[r.reporter] = r.capacityMinutes; });
+
+  const emitted = {}; // reporter||scheme -> true
+
+  schemes.forEach(function (sc) {
+    let need = sc.demandMinutes;
+    if (need <= 0) return;
+    for (let i = 0; i < pool.length && need > 0.01; i++) {
+      const rep = pool[i];
+      const avail = remaining[rep.reporter];
+      if (avail <= 0) continue;
+      const use = Math.min(avail, need);
+      remaining[rep.reporter] -= use;
+      need -= use;
+      const cases = sc.ahtMinutes > 0 ? use / sc.ahtMinutes : 0;
+      const key = rep.reporter + '||' + sc.scheme;
+      const overridden = Object.prototype.hasOwnProperty.call(ovMap, key);
+      recs.push({
+        reporter: rep.reporter,
+        scheme: sc.scheme,
+        recommendedCases: Math.round(cases),
+        recommendedHours: round1_(use / CONFIG.minutesPerHour),
+        allocatedCases: overridden ? ovMap[key] : Math.round(cases),
+        overridden: overridden,
+        capacityHours: rep.capacityHours
+      });
+      emitted[key] = true;
+    }
+  });
+
+  // surface any manual overrides that greedy didn't already place
+  Object.keys(ovMap).forEach(function (key) {
+    if (emitted[key]) return;
+    const parts = key.split('||');
+    const rep = reporters.filter(function (r) { return r.reporter === parts[0]; })[0];
+    recs.push({
+      reporter: parts[0], scheme: parts[1],
+      recommendedCases: 0, recommendedHours: 0,
+      allocatedCases: ovMap[key], overridden: true,
+      capacityHours: rep ? rep.capacityHours : 0
+    });
+  });
+
   recs.sort(function (a, b) { return b.recommendedHours - a.recommendedHours; });
   return recs;
 }

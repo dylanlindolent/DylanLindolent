@@ -26,12 +26,21 @@ source of truth.
 - **Demand (per scheme)** = backlog cases × new AHT (minutes).
 - **Team capacity** = sum of every rostered employee's capacity.
 - **Utilisation** = total demand ÷ team capacity.
-- **Recommended allocation** = demand-weighted split of team capacity across
-  schemes, then split across employees in proportion to each person's capacity.
-  Any manual override saved from the dashboard takes precedence.
+- **Recommended allocation** — two selectable strategies:
+  - *Proportional* (default): demand-weighted split of team capacity across
+    schemes, then split across employees in proportion to each person's capacity.
+  - *Greedy*: clear the biggest backlog first, filling one scheme from the
+    capacity pool (largest-capacity employees first) before moving to the next —
+    produces focused, one-or-two-scheme assignments per person.
+  Any manual override saved from the dashboard takes precedence under either.
+
+**Charts**: demand-vs-capacity by scheme, capacity per employee, and a
+**planned-allocation-by-employee** chart (recommended hours per person, stacked
+and coloured by scheme).
 
 **Filters** (one row above the charts): date from/to (+ Today / 7d / 30d / MTD /
-All presets), reporter (employee), and scheme (multi-select).
+All presets), reporter (employee), scheme (multi-select), and allocation
+strategy.
 
 **Theme** — light, Checkout-branded (indigo accent `--brand`, easily swapped to
 your exact pantone). Chart series use a colour-blind-validated categorical
