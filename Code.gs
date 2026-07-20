@@ -267,6 +267,19 @@ function probeBacklog() {
   return probeRawRows_(CONFIG.backlog.sheetId, CONFIG.backlog.tab, 6);
 }
 
+/**
+ * probeBacklog() showed "Backlog_Team Planning" is a pivot table with no
+ * scheme column — these two probe candidate tabs in the same spreadsheet
+ * that sound more likely to hold per-scheme backlog volume.
+ */
+function probeSchemeView() {
+  return probeRawRows_(CONFIG.backlog.sheetId, 'Scheme_View', 8);
+}
+
+function probeBacklogAllocation() {
+  return probeRawRows_(CONFIG.backlog.sheetId, 'Backlog_allocation', 8);
+}
+
 /* ============================ MODEL BUILD ============================= */
 
 function buildModel_(filters) {
