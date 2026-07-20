@@ -418,12 +418,12 @@
       var utilClass = util > 100 ? 'bad' : (util > 85 ? 'warn' : 'good');
       var surplusClass = k.surplusHours < 0 ? 'bad' : 'good';
       var tiles = [
-        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours (' + k.workingDays + ' working days)' },
+        { k: 'Team capacity', v: fmt(k.teamCapacityHours), u: 'hours across ' + fmt(k.teamSize) + ' people' },
         { k: 'Demand (backlog)', v: fmt(k.demandHours), u: fmt(k.backlogCases) + ' cases' },
         { k: 'Utilisation', v: fmt(util) + '<small>%</small>', u: '<span class="pill ' + utilClass + '">' + (util > 100 ? 'Over capacity' : 'Within capacity') + '</span>' },
-        { k: 'Head-count', v: fmt(k.headcount), u: 'rostered employees' },
+        { k: 'Head-count', v: fmt(k.headcount), u: 'available per day, avg.' },
         { k: 'Surplus / deficit', v: (k.surplusHours >= 0 ? '+' : '') + fmt(k.surplusHours), u: '<span class="pill ' + surplusClass + '">' + (k.surplusHours >= 0 ? 'spare hrs' : 'short hrs') + '</span>' },
-        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current head-count' }
+        { k: 'Est. days to clear', v: fmt(k.daysToClear), u: 'at current daily head-count' }
       ];
       $('kpis').innerHTML = tiles.map(function (t) {
         return '<div class="tile"><div class="k">' + t.k + '</div><div class="v">' + t.v + '</div><div class="u">' + t.u + '</div></div>';
