@@ -260,7 +260,7 @@ function probeRawRows_(sheetId, tabName, n) {
 }
 
 function probeRota() {
-  return probeRawRows_(CONFIG.rota.sheetId, CONFIG.rota.tab, 6);
+  return probeRawRows_(CONFIG.rota.sheetId, CONFIG.rota.tab, 40);
 }
 
 function probeBacklog() {
