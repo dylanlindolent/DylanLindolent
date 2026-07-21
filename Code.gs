@@ -111,6 +111,23 @@ const CONFIG = {
     headerRow: 1,
     weekCol: 0,   // column A — a week label, e.g. "Week 1" (not yet a real date)
     namesCol: 1   // column B — comma-separated names
+  },
+
+  // Leave lives in the same spreadsheet as Rota. One row per person's latest
+  // leave record (Name, StartDate, EndDate) — not an accumulating log. Names
+  // here are FULL names (e.g. "DILMAHOMED-AMIRAH-SHABNEEZ", "KELINA ITTOO"),
+  // not the short nicknames Rota/Backlog_allocation use ("SHABNEEZ", "Kelina")
+  // — matched by checking whether the short name appears as a whole word
+  // inside the full name, see leaveMatchesPerson_.
+  leave: {
+    sheetId: '1-K8fLgvU7h52ZYdEwEfZR5q3gYSyURjsCVJRlwB_K-g',
+    tab: 'Leave',
+    headerRow: 1,
+    columns: {
+      name:  ['name', 'reviewer', 'reporter', 'employee'],
+      start: ['startdate', 'start date', 'from', 'leave start'],
+      end:   ['enddate', 'end date', 'to', 'leave end']
+    }
   }
 };
 
@@ -265,7 +282,7 @@ function diagnostics() {
   const out = [];
 
   // AHT and Backlog are simple flat tables — use generic header detection.
-  [['AHT', CONFIG.aht], ['BACKLOG', CONFIG.backlog]].forEach(function (pair) {
+  [['AHT', CONFIG.aht], ['BACKLOG', CONFIG.backlog], ['LEAVE', CONFIG.leave]].forEach(function (pair) {
     const label = pair[0], cfg = pair[1];
     try {
       const t = readTable_(cfg.sheetId, cfg.tab, cfg.headerRow);
@@ -300,12 +317,35 @@ function diagnostics() {
   // Backlog roster — a separate person source from Rota (see module doc
   // comment). Currently sparse (no per-week dates), so this just reports
   // whatever's in the tab right now.
+  let backlogTeamNamesForLeaveCheck = [];
   try {
     const team = readBacklogTeamRoster_();
+    backlogTeamNamesForLeaveCheck = team.names;
     out.push('BACKLOG TEAM [' + CONFIG.backlogTeam.tab + ']  weeks: ' + JSON.stringify(team.weeks) +
       '  all names: ' + JSON.stringify(team.names));
   } catch (e) {
     out.push('BACKLOG TEAM  ERROR: ' + e);
+  }
+
+  // Leave uses full names ("DILMAHOMED-AMIRAH-SHABNEEZ") while Rota/Backlog
+  // use short nicknames ("SHABNEEZ") — this checks the fuzzy match actually
+  // links each known short name to a Leave row, so a naming mismatch shows
+  // up here rather than silently failing to exclude someone's leave days.
+  try {
+    const leaveRows = readLeave_();
+    let rotaNames = [];
+    try { rotaNames = uniqueSorted_(readRota_().map(function (r) { return r.reporter; })); } catch (e3) {}
+    const allKnownNames = uniqueSorted_(rotaNames.concat(backlogTeamNamesForLeaveCheck));
+    out.push('LEAVE [' + CONFIG.leave.tab + ']  rows: ' + JSON.stringify(leaveRows.map(function (lv) {
+      return lv.name + ': ' + fmtDate_(lv.start) + ' to ' + fmtDate_(lv.end);
+    })));
+    const matches = allKnownNames.map(function (name) {
+      const hit = leaveRows.filter(function (lv) { return leaveMatchesPerson_(lv.name, name); })[0];
+      return name + (hit ? (' -> matched "' + hit.name + '"') : ' -> no leave record found');
+    });
+    out.push('   name matching: ' + JSON.stringify(matches));
+  } catch (e) {
+    out.push('LEAVE  ERROR: ' + e);
   }
 
   const msg = out.join('\n');
@@ -371,6 +411,7 @@ function buildModel_(filters) {
   const backlogRows = readBacklog_();
   const rotaRows = readRota_();
   const overrides = readAllocations_();
+  const isOnLeave_ = buildLeaveChecker_(readLeave_());
 
   // ---- AHT per scheme (minutes/case), averaged across every entity row for
   // that scheme (AHT Validation has one row per reconciliation key, i.e. per
@@ -444,11 +485,12 @@ function buildModel_(filters) {
     if (reporterFilter && r.reporter !== reporterFilter) return;
     if (!inDate(r.date)) return;
     if (!r.working) return;
+    const dayKey = r.date ? fmtDate_(r.date) : ('row' + r.__row);
+    if (isOnLeave_(r.reporter, dayKey)) return; // on leave — not actually present that day
 
     const rep = perReporter[r.reporter] || (perReporter[r.reporter] = {
       reporter: r.reporter, days: 0, minutes: 0, dates: {}, rotaScheme: {}
     });
-    const dayKey = r.date ? fmtDate_(r.date) : ('row' + r.__row);
     if (!rep.dates[dayKey]) {
       rep.dates[dayKey] = true;
       rep.days += 1;
@@ -481,6 +523,7 @@ function buildModel_(filters) {
   rotaRows.forEach(function (r) {
     if (!r.reporter || !r.working || !inDate(r.date)) return;
     const dayKey = r.date ? fmtDate_(r.date) : ('row' + r.__row);
+    if (isOnLeave_(r.reporter, dayKey)) return;
     (rotaDaysByPerson[r.reporter] || (rotaDaysByPerson[r.reporter] = {}))[dayKey] = true;
   });
 
@@ -546,10 +589,12 @@ function buildModel_(filters) {
   // ---- BACKLOG track: Rota's leftover capacity, driven by Scheme_View demand
   // Rota is priority: a person's Rota-listed reconciliation consumes their
   // full day, so Backlog capacity is only the genuinely REMAINING time —
-  // days in the window they were NOT Rota-consumed on. With the current
-  // (disjoint) rosters this equals every day for everyone in
-  // Backlog_allocation, but the calculation is per-person so it stays
-  // correct if the same person ever appears in both lists.
+  // days in the window they were NOT Rota-consumed on, AND not on leave
+  // (leave makes someone unavailable full stop, not "remaining for Backlog").
+  // With the current (disjoint) rosters the Rota-consumed part equals every
+  // day for everyone in Backlog_allocation, but the calculation is
+  // per-person so it stays correct if the same person ever appears in both
+  // lists.
   const backlogRoster = readBacklogTeamRoster_();
   const backlogNames = reporterFilter
     ? backlogRoster.names.filter(function (n) { return n === reporterFilter; })
@@ -557,7 +602,9 @@ function buildModel_(filters) {
   const backlogSchemeNames = schemes.map(function (sc) { return sc.scheme; });
   const backlogRepInputs = backlogNames.map(function (name) {
     const consumedDays = rotaDaysByPerson[name] || {};
-    const remainingDayKeys = dayKeysWorked.filter(function (dayKey) { return !consumedDays[dayKey]; });
+    const remainingDayKeys = dayKeysWorked.filter(function (dayKey) {
+      return !consumedDays[dayKey] && !isOnLeave_(name, dayKey);
+    });
     const remainingMinutes = remainingDayKeys.length * dayMinutes;
     return {
       reporter: name,
@@ -882,6 +929,54 @@ function readBacklogTeamRoster_() {
     weeks.push({ label: label, names: rowNames });
   }
   return { weeks: weeks, names: names };
+}
+
+/**
+ * Leave reader — one row per person's latest leave record (Name, StartDate,
+ * EndDate), not an accumulating log. Rows with no start/end are skipped
+ * (no leave currently on record for that person).
+ */
+function readLeave_() {
+  const cfg = CONFIG.leave;
+  const t = readTable_(cfg.sheetId, cfg.tab, cfg.headerRow);
+  const cols = detectColumns_(t.headers, cfg.columns);
+  return t.rows.map(function (row) {
+    return {
+      name: cleanStr_(cols.name != null ? row.__cells[cols.name] : ''),
+      start: cols.start != null ? toDate_(row.__cells[cols.start]) : null,
+      end: cols.end != null ? toDate_(row.__cells[cols.end]) : null
+    };
+  }).filter(function (r) { return r.name && r.start && r.end; });
+}
+
+/**
+ * Leave tab names are full names ("DILMAHOMED-AMIRAH-SHABNEEZ", "KELINA
+ * ITTOO"); Rota/Backlog_allocation use short nicknames ("SHABNEEZ", "Kelina").
+ * Matches if the short name appears as a whole normalised word inside the
+ * full name — e.g. "shabneez" is a word in "dilmahomed amirah shabneez".
+ */
+function leaveMatchesPerson_(fullName, shortName) {
+  const words = normalize_(fullName).split(' ').filter(Boolean);
+  return words.indexOf(normalize_(shortName)) !== -1;
+}
+
+/**
+ * Builds an isOnLeave_(personShortName, dayKey) checker from a set of leave
+ * records. Compares "yyyy-MM-dd" strings (via fmtDate_), not raw Date
+ * objects, for the same timezone-safety reason inDate() does in buildModel_.
+ */
+function buildLeaveChecker_(leaveRows) {
+  const ranges = leaveRows.map(function (lv) {
+    return { name: lv.name, startKey: fmtDate_(lv.start), endKey: fmtDate_(lv.end) };
+  });
+  return function (personShortName, dayKey) {
+    if (!personShortName || !dayKey) return false;
+    for (let i = 0; i < ranges.length; i++) {
+      const r = ranges[i];
+      if (dayKey >= r.startKey && dayKey <= r.endKey && leaveMatchesPerson_(r.name, personShortName)) return true;
+    }
+    return false;
+  };
 }
 
 function readAllocations_() {

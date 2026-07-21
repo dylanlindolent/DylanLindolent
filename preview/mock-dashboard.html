@@ -509,7 +509,7 @@
       $('footnote').textContent = 'Assumption: ' + a.productivityHoursPerDay + ' productive hrs/day (' +
         a.dayMinutes + ' min). AHT source: AHT Validation!E. Rota takes priority — a rostered day is fully consumed by ' +
         'reconciliation; only genuinely remaining time counts toward Backlog capacity, and Backlog demand is scoped to ' +
-        'schemes currently active on Rota. ' +
+        'schemes currently active on Rota. Days on leave (per the Leave tab) are excluded from both. ' +
         (LAST.overridesCount ? (LAST.overridesCount + ' manual override(s) applied from Rota.') : '');
     }
 

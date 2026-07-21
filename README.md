@@ -31,6 +31,7 @@ Allocations` tab.
 | **Rota** | `Rota` tab | Who is working reconciliation, which day, which scheme → coverage + capacity |
 | **Backlog roster** | `Backlog_allocation` tab | Who is working the Backlog activity → separate capacity pool |
 | **Backlog demand** | `Scheme_View` tab | Open cases per scheme (`Grand Total` column) → demand for the Backlog activity |
+| **Leave** | `Leave` tab (same spreadsheet as Rota) | Days a person is on leave → excluded from both Rota and Backlog capacity |
 
 **Data quirks this script accounts for:**
 - `AHT Validation` has one row per **entity+scheme** (reconciliation key, e.g. `US-VISA`), not one row per scheme — AHT is averaged across all entities sharing a scheme.
@@ -39,6 +40,7 @@ Allocations` tab.
 - Each Rota reviewer is typically rostered for **many** schemes at once (all `DAILY`), not one.
 - `Backlog_allocation` currently only has one row (`"Week 1" → "Nooreena, Kelina, Amit"`), with no date/week mapping yet — every name in that tab is treated as available for the whole filtered window. Once real per-week dates are added, wire them into `readBacklogTeamRoster_` the same way Rota's dates are read.
 - The Rota reviewers and the Backlog roster are **different people** in the current data (no name overlap) — the reporter filter lists both, so either group can be selected individually.
+- `Leave` uses **full names** (`DILMAHOMED-AMIRAH-SHABNEEZ`, `KELINA ITTOO`) while Rota/`Backlog_allocation` use short nicknames (`SHABNEEZ`, `Kelina`) — matched by checking whether the short name appears as a whole word inside the full name (`leaveMatchesPerson_`). `diagnostics()` prints a `LEAVE` name-matching line so an unmatched person is visible rather than silently ignored. It's one row per person's *latest* leave record (Name/StartDate/EndDate), not an accumulating log.
 
 **Calculations**
 
@@ -53,8 +55,8 @@ open backlog but no Rota coverage today is out of scope (falls back to
 showing everything if Rota has no data at all for the current filter, so the
 dashboard never silently zeroes out).
 
-- **Rota capacity (per reviewer)** = working days in range × 7 hrs.
-- **Backlog capacity (per person)** = (working days Rota has data for in range, minus any of those days that person was Rota-rostered on) × 7 hrs.
+- **Rota capacity (per reviewer)** = (working days in range, minus any days on leave) × 7 hrs.
+- **Backlog capacity (per person)** = (working days Rota has data for in range, minus any of those days that person was Rota-rostered on, minus any days on leave) × 7 hrs.
 - **Backlog demand (per scheme)** = backlog cases (`Grand Total`) × new AHT (minutes), scheme name matched via the Reconciliation → Scheme lookup, restricted to schemes currently active on Rota.
 - **Backlog utilisation** = total demand ÷ Backlog team capacity — "are they fully utilised for the 7 hours, based on the AHT?", shown both team-wide and per person.
 - **Recommended Backlog allocation** — two selectable strategies (unlike Rota, there's no per-person scheme roster for Backlog yet, so everyone is eligible for every scheme currently in view):
