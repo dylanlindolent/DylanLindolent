@@ -354,6 +354,16 @@ function probeBacklogAllocation() {
   return probeRawRows_(CONFIG.backlog.sheetId, 'Backlog_allocation', 40);
 }
 
+/**
+ * The Rota spreadsheet also has a "Leave" tab (listed by listTabNames()) that
+ * isn't read yet — capacity currently assumes everyone rostered on Rota is
+ * present all day. Probing this to see its real layout before wiring leave
+ * days/hours into the capacity calculation.
+ */
+function probeLeave() {
+  return probeRawRows_(CONFIG.rota.sheetId, 'Leave', 40);
+}
+
 /* ============================ MODEL BUILD ============================= */
 
 function buildModel_(filters) {
